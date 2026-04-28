@@ -6,6 +6,7 @@ import './App.css'
 
 const Analytics = lazy(() => import('./pages/Analytics.jsx'))
 const FollowUps = lazy(() => import('./pages/FollowUps.jsx'))
+const ScoringConfig = lazy(() => import('./pages/ScoringConfig.jsx'))
 
 function Layout() {
   return (
@@ -16,6 +17,7 @@ function Layout() {
           <Link to="/dashboard">Dashboard</Link>
           <Link to="/follow-ups">Follow-Ups</Link>
           <Link to="/analytics">Analytics</Link>
+          <Link to="/config">Scoring Config</Link>
           <Link to="/add-lead">Add lead</Link>
         </div>
       </nav>
@@ -52,6 +54,20 @@ function Layout() {
             }
           />
           <Route path="/add-lead" element={<AddLead />} />
+          <Route
+            path="/config"
+            element={
+              <Suspense
+                fallback={
+                  <div className="page page-wide">
+                    <p className="muted">Loading scoring config…</p>
+                  </div>
+                }
+              >
+                <ScoringConfig />
+              </Suspense>
+            }
+          />
         </Routes>
       </main>
     </div>

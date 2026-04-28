@@ -84,7 +84,7 @@ export default function Dashboard() {
     const { data: leadRows, error: leadsError } = await supabase
       .from('leads')
       .select(
-        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded',
+        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded,industry_id,business_type_id,industries(name),business_types(name)',
       )
       .order('score', { ascending: false })
 
@@ -304,52 +304,43 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="page page-wide page-dashboard">
-      <header className="page-header page-header-row dashboard-page-header">
-        <div className="dashboard-header-main">
-          <h1>Dashboard</h1>
-          <p className="page-subtitle">Leads sorted by score. Realtime enabled.</p>
-          <div className="response-metrics" aria-label="Global response time">
-            <div className="response-metric card">
-              <span className="response-metric-label">Avg response</span>
-              <strong className="response-metric-value">
-                {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
-              </strong>
-              <span className="response-metric-hint">
-                {responseStats.count ? `${responseStats.count} with first action` : 'No samples yet'}
-              </span>
-            </div>
-            <div className="response-metric card">
-              <span className="response-metric-label">Fastest</span>
-              <strong className="response-metric-value">
-                {responseStats.fastest != null ? formatDurationMs(responseStats.fastest) : '—'}
-              </strong>
-            </div>
-            <div className="response-metric card">
-              <span className="response-metric-label">Slowest</span>
-              <strong className="response-metric-value">
-                {responseStats.slowest != null ? formatDurationMs(responseStats.slowest) : '—'}
-              </strong>
-            </div>
+    <div className="page page-wide page-dashboard dashboard-root dashboard-layout">
+      <header className="page-header dashboard-page-header">
+        <div className="dashboard-header-top">
+          <div className="dashboard-header-titles">
+            <h1>Dashboard</h1>
+            <p className="page-subtitle">Leads by score · realtime updates</p>
           </div>
-        </div>
-        <div className="header-actions">
-          <Link className="btn btn-secondary" to="/follow-ups">
-            Follow-Ups
-          </Link>
-          <Link className="btn btn-secondary" to="/analytics">
-            Analytics
-          </Link>
-          <button type="button" className="btn btn-secondary" onClick={loadData}>
-            Refresh
-          </button>
-          <Link className="btn btn-primary" to="/add-lead">
+          <Link className="btn btn-primary btn-sm dashboard-add-lead" to="/add-lead">
             Add lead
           </Link>
         </div>
+        <div className="response-metrics dashboard-kpis" aria-label="Global response time">
+          <div className="response-metric dashboard-kpi">
+            <span className="response-metric-label">Avg response</span>
+            <strong className="response-metric-value">
+              {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
+            </strong>
+            <span className="response-metric-hint">
+              {responseStats.count ? `${responseStats.count} with first action` : 'No samples yet'}
+            </span>
+          </div>
+          <div className="response-metric dashboard-kpi">
+            <span className="response-metric-label">Fastest</span>
+            <strong className="response-metric-value">
+              {responseStats.fastest != null ? formatDurationMs(responseStats.fastest) : '—'}
+            </strong>
+          </div>
+          <div className="response-metric dashboard-kpi">
+            <span className="response-metric-label">Slowest</span>
+            <strong className="response-metric-value">
+              {responseStats.slowest != null ? formatDurationMs(responseStats.slowest) : '—'}
+            </strong>
+          </div>
+        </div>
       </header>
 
-      <div className="crm-toolbar card">
+      <div className="crm-toolbar card dashboard-toolbar">
         <div className="crm-toolbar-row">
           <label className="inline-field">
             <span>I am (dev)</span>
@@ -474,27 +465,29 @@ export default function Dashboard() {
       {loading ? (
         <p className="muted">Loading leads…</p>
       ) : leads.length === 0 ? (
-        <div className="card empty-state">
+        <div className="card empty-state dashboard-empty">
           <p>No leads yet.</p>
-          <Link className="btn btn-primary" to="/add-lead">
-            Add your first lead
+          <Link className="btn btn-primary btn-sm" to="/add-lead">
+            Add lead
           </Link>
         </div>
       ) : filteredLeads.length === 0 ? (
-        <div className="card empty-state">
+        <div className="card empty-state dashboard-empty">
           <p>No leads match this filter.</p>
-          <button type="button" className="btn btn-secondary" onClick={clearFilters}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
             Clear filters
           </button>
         </div>
       ) : (
-        <div className="table-wrap card table-scroll">
+        <div className="table-wrap card table-scroll dashboard-table-wrap">
           <table className="data-table data-table-crm data-table-sticky">
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Score</th>
                 <th>Category</th>
+                <th>Industry</th>
+                <th>Business type</th>
                 <th>Source</th>
                 <th>Status</th>
                 <th>Assign to</th>

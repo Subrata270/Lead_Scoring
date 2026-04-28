@@ -103,6 +103,8 @@ export default function LeadRow({
         <td>
           <span className={categoryPillClass(lead.category)}>{lead.category}</span>
         </td>
+        <td>{lead.industries?.name ?? '—'}</td>
+        <td>{lead.business_types?.name ?? '—'}</td>
         <td>{lead.source}</td>
         <td>
           <select
@@ -150,7 +152,7 @@ export default function LeadRow({
       </tr>
       {suggestions.length > 0 ? (
         <tr className="lead-suggestions-row">
-          <td colSpan={8}>
+          <td colSpan={10}>
             <div className="suggestion-row-inner" role="list" aria-label="AI suggestions">
               {suggestions.map((s) => (
                 <span key={s.id} className={suggestionToneClass(s.tone)} role="listitem">
@@ -166,7 +168,7 @@ export default function LeadRow({
       ) : null}
       {expanded ? (
         <tr className="lead-row-expanded">
-          <td colSpan={8}>
+          <td colSpan={10}>
             <div className="tasks-panel">
               <LeadTimeline lead={lead} tasks={tasks} />
               <h3 className="tasks-panel-title">Tasks for {lead.name}</h3>

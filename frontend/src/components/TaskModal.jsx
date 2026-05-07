@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { TASK_TYPES } from '../constants/crm'
+import { useAuth } from '../hooks/useAuth.js'
 
 export default function TaskModal({ lead, onClose, onCreated }) {
+  const { user, organization } = useAuth()
   const [taskType, setTaskType] = useState('call')
   const [dueDate, setDueDate] = useState('')
   const [saving, setSaving] = useState(false)
@@ -23,6 +25,8 @@ export default function TaskModal({ lead, onClose, onCreated }) {
       .from('tasks')
       .insert({
         lead_id: lead.id,
+        organization_id: lead.organization_id ?? organization?.id,
+        created_by: user?.id ?? null,
         task_type: taskType,
         due_date: dueIso,
         status: 'pending',

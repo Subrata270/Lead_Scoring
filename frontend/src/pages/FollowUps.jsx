@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, startTransition } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../hooks/useAuth.js'
 import { isDueTodayFollowUp, isOverdueFollowUp, sortByDueAsc } from '../utils/followUpBuckets'
+import { isSalesperson } from '../utils/access.js'
 
 function normalizeLead(embed) {
   if (!embed) return null
@@ -17,6 +19,11 @@ function categoryPillClass(category) {
 }
 
 export default function FollowUps() {
+  const { organization, profile } = useAuth()
+  const orgId = organization?.id
+  const profileName = profile?.full_name?.trim() || ''
+  const salesRestricted = isSalesperson(profile?.role)
+
   const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -27,6 +34,12 @@ export default function FollowUps() {
     setLoading(true)
     setError(null)
 
+    if (!orgId) {
+      setLoading(false)
+      setRows([])
+      return
+    }
+
     const { data, error: fetchError } = await supabase
       .from('tasks')
       .select(
@@ -36,16 +49,19 @@ export default function FollowUps() {
         task_type,
         due_date,
         status,
+        organization_id,
         leads (
           id,
           name,
           phone,
           category,
-          assigned_to
+          assigned_to,
+          organization_id
         )
       `,
       )
       .eq('status', 'pending')
+      .eq('organization_id', orgId)
 
     setLoading(false)
 
@@ -54,15 +70,19 @@ export default function FollowUps() {
       return
     }
 
-    const list = (data ?? [])
+    let list = (data ?? [])
       .map((row) => {
         const lead = normalizeLead(row.leads)
         return { ...row, lead }
       })
-      .filter((row) => row.lead)
+      .filter((row) => row.lead && row.lead.organization_id === orgId)
+
+    if (salesRestricted && profileName) {
+      list = list.filter((row) => (row.lead.assigned_to || '').trim() === profileName)
+    }
 
     setRows(list)
-  }, [])
+  }, [orgId, salesRestricted, profileName])
 
   useEffect(() => {
     startTransition(() => {
@@ -90,6 +110,7 @@ export default function FollowUps() {
       .from('tasks')
       .update({ status: 'done', completed_at })
       .eq('id', taskId)
+      .eq('organization_id', orgId)
     if (upErr) {
       ;({ error: upErr } = await supabase.from('tasks').update({ status: 'done' }).eq('id', taskId))
     }
@@ -115,6 +136,7 @@ export default function FollowUps() {
           <h1>Follow-ups</h1>
           <p className="page-subtitle">
             Pending tasks due today or overdue. Refreshes every minute.
+            {salesRestricted ? ' Showing tasks for leads assigned to you.' : null}
           </p>
         </div>
         <div className="header-actions">

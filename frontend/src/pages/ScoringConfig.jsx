@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../hooks/useAuth.js'
 import { useIndustries } from '../hooks/useIndustries.js'
 import { useBusinessTypes } from '../hooks/useBusinessTypes.js'
 import { useScoringConfig } from '../hooks/useScoringConfig.js'
 import { SCORING_DEFAULT_BUDGETS } from '../utils/leadScoring.js'
 
 export default function ScoringConfig() {
+  const { organization } = useAuth()
+  const orgId = organization?.id
+
   const [industryId, setIndustryId] = useState('')
   const [businessTypeId, setBusinessTypeId] = useState('')
   const [highBudget, setHighBudget] = useState('')
@@ -24,7 +28,7 @@ export default function ScoringConfig() {
     error: configError,
     usingDefault,
     reload,
-  } = useScoringConfig(industryId || null, businessTypeId || null)
+  } = useScoringConfig(industryId || null, businessTypeId || null, orgId ?? null)
 
   useEffect(() => {
     setSaveOk(false)
@@ -45,6 +49,11 @@ export default function ScoringConfig() {
     e.preventDefault()
     setSaveError(null)
     setSaveOk(false)
+    if (!orgId) {
+      setSaveError('Missing organization. Sign in again.')
+      return
+    }
+
     if (!industryId || !businessTypeId) {
       setSaveError('Select an industry and business type.')
       return
@@ -63,13 +72,14 @@ export default function ScoringConfig() {
     setSaving(true)
     const { error } = await supabase.from('scoring_configs').upsert(
       {
+        organization_id: orgId,
         industry_id: industryId,
         business_type_id: businessTypeId,
         high_budget: high,
         medium_budget: medium,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'industry_id,business_type_id' },
+      { onConflict: 'organization_id,industry_id,business_type_id' },
     )
     setSaving(false)
     if (error) {

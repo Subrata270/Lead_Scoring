@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../hooks/useAuth.js'
 import { calculateLeadScore, SCORING_DEFAULT_BUDGETS } from '../utils/leadScoring'
 import { useIndustries } from '../hooks/useIndustries.js'
 import { useBusinessTypes } from '../hooks/useBusinessTypes.js'
@@ -19,6 +20,7 @@ const initialForm = {
 }
 
 export default function AddLead() {
+  const { organization, user } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState(initialForm)
   const [submitting, setSubmitting] = useState(false)
@@ -32,7 +34,7 @@ export default function AddLead() {
     loading: scoringLoading,
     error: scoringError,
     usingDefault,
-  } = useScoringConfig(form.industry_id || null, form.business_type_id || null)
+  } = useScoringConfig(form.industry_id || null, form.business_type_id || null, organization?.id ?? null)
 
   function updateField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -46,6 +48,12 @@ export default function AddLead() {
     e.preventDefault()
     setError(null)
     setSubmitting(true)
+
+    if (!organization?.id) {
+      setError('No organization in session. Sign in again.')
+      setSubmitting(false)
+      return
+    }
 
     if (!form.industry_id || !form.business_type_id) {
       setError('Please select an industry and business type.')
@@ -63,6 +71,7 @@ export default function AddLead() {
     const { row: configRow, error: configErr } = await fetchScoringConfigRow(
       form.industry_id,
       form.business_type_id,
+      organization?.id,
     )
     if (configErr) {
       setError(configErr.message)
@@ -96,6 +105,8 @@ export default function AddLead() {
       category,
       status: 'new',
       assigned_to: '',
+      organization_id: organization?.id,
+      created_by: user?.id ?? null,
     }
 
     const { error: insertError } = await supabase.from('leads').insert(row)

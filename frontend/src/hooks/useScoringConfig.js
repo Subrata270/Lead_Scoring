@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
-/** Fetch a single scoring_configs row for industry + business type (or null). */
-export async function fetchScoringConfigRow(industryId, businessTypeId) {
-  if (!industryId || !businessTypeId) {
+/** Fetch scoring_configs for industry + business type scoped to an organization. */
+export async function fetchScoringConfigRow(industryId, businessTypeId, organizationId) {
+  if (!industryId || !businessTypeId || !organizationId) {
     return { row: null, error: null }
   }
   const { data, error } = await supabase
     .from('scoring_configs')
-    .select('id,high_budget,medium_budget,industry_id,business_type_id')
+    .select('id,high_budget,medium_budget,industry_id,business_type_id,organization_id')
+    .eq('organization_id', organizationId)
     .eq('industry_id', industryId)
     .eq('business_type_id', businessTypeId)
     .maybeSingle()
@@ -16,7 +17,7 @@ export async function fetchScoringConfigRow(industryId, businessTypeId) {
   return { row: data, error: null }
 }
 
-export function useScoringConfig(industryId, businessTypeId) {
+export function useScoringConfig(industryId, businessTypeId, organizationId) {
   const [row, setRow] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -36,7 +37,7 @@ export function useScoringConfig(industryId, businessTypeId) {
     let cancelled = false
 
     async function run() {
-      if (!industryId || !businessTypeId) {
+      if (!industryId || !businessTypeId || !organizationId) {
         if (!cancelled) {
           setRow(null)
           setLoading(false)
@@ -48,7 +49,7 @@ export function useScoringConfig(industryId, businessTypeId) {
         setLoading(true)
         setError(null)
       }
-      const { row: r, error: err } = await fetchScoringConfigRow(industryId, businessTypeId)
+      const { row: r, error: err } = await fetchScoringConfigRow(industryId, businessTypeId, organizationId)
       if (cancelled) return
       applyResult(r, err)
     }
@@ -57,10 +58,10 @@ export function useScoringConfig(industryId, businessTypeId) {
     return () => {
       cancelled = true
     }
-  }, [industryId, businessTypeId, applyResult])
+  }, [industryId, businessTypeId, organizationId, applyResult])
 
   const reload = useCallback(async () => {
-    if (!industryId || !businessTypeId) {
+    if (!industryId || !businessTypeId || !organizationId) {
       setRow(null)
       setLoading(false)
       setError(null)
@@ -68,12 +69,12 @@ export function useScoringConfig(industryId, businessTypeId) {
     }
     setLoading(true)
     setError(null)
-    const { row: r, error: err } = await fetchScoringConfigRow(industryId, businessTypeId)
+    const { row: r, error: err } = await fetchScoringConfigRow(industryId, businessTypeId, organizationId)
     applyResult(r, err)
-  }, [industryId, businessTypeId, applyResult])
+  }, [industryId, businessTypeId, organizationId, applyResult])
 
   const usingDefault = Boolean(
-    industryId && businessTypeId && !loading && !error && !row,
+    industryId && businessTypeId && organizationId && !loading && !error && !row,
   )
 
   return {

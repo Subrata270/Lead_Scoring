@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabaseClient'
 import { CRM_USERS, LEAD_STATUSES } from '../constants/crm'
 import { countOverduePendingTasks, isTaskOverdue } from '../utils/taskHelpers'
 import { formatTimeToFirstAction, isHotNow } from '../utils/leadHot'
-import { getSuggestionsForLead } from '../utils/aiSuggestions.js'
+import { getPrimarySuggestion, getSuggestionsForLead } from '../utils/aiSuggestions.js'
 import LeadTimeline from './LeadTimeline.jsx'
+import MessageModal from './MessageModal.jsx'
 
 function categoryPillClass(category) {
   const c = (category || '').toLowerCase()
@@ -26,9 +27,17 @@ function suggestionToneClass(tone) {
   return `suggestion-chip suggestion-chip--${tone}`
 }
 
+function digitsForTel(phone) {
+  if (phone == null) return ''
+  const s = String(phone).trim()
+  if (!s) return ''
+  return s.replace(/[^\d+]/g, '')
+}
+
 export default function LeadRow({
   lead,
   tasks,
+  assigneeOptions = CRM_USERS,
   expanded,
   pulseHot,
   onToggleExpand,
@@ -37,8 +46,11 @@ export default function LeadRow({
   onAddTask,
 }) {
   const [savingField, setSavingField] = useState(null)
+  const [messageOpen, setMessageOpen] = useState(false)
 
   const suggestions = useMemo(() => getSuggestionsForLead(lead, tasks), [lead, tasks])
+  const primary = useMemo(() => getPrimarySuggestion(lead, tasks), [lead, tasks])
+  const telDigits = useMemo(() => digitsForTel(lead.phone), [lead.phone])
 
   const overdueCount = countOverduePendingTasks(tasks)
   const statusValue = LEAD_STATUSES.includes(lead.status) ? lead.status : 'new'
@@ -128,12 +140,24 @@ export default function LeadRow({
             onChange={(e) => updateLead('assigned_to', e.target.value)}
           >
             <option value="">Unassigned</option>
-            {CRM_USERS.map((u) => (
+            {assigneeOptions.map((u) => (
               <option key={u} value={u}>
                 {u}
               </option>
             ))}
           </select>
+        </td>
+        <td className="lead-suggestion-cell">
+          {primary ? (
+            <span
+              className={`${suggestionToneClass(primary.tone)} suggestion-chip--compact`}
+              title={primary.text}
+            >
+              {primary.text}
+            </span>
+          ) : (
+            <span className="muted subtle">—</span>
+          )}
         </td>
         <td>
           {overdueCount > 0 ? (
@@ -144,21 +168,67 @@ export default function LeadRow({
             <span className="muted subtle">—</span>
           )}
         </td>
-        <td>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => onAddTask(lead)}>
-            Add task
-          </button>
+        <td className="lead-actions-cell">
+          <div className="lead-actions-cluster">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => onAddTask(lead)}
+            >
+              Add task
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMessageOpen(true)}
+            >
+              Generate message
+            </button>
+            {telDigits ? (
+              <a className="btn btn-secondary btn-sm" href={`tel:${telDigits}`}>
+                Call
+              </a>
+            ) : (
+              <span className="btn btn-secondary btn-sm btn-sm--disabled" title="No phone on file">
+                Call
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={!telDigits}
+              title={!telDigits ? 'Add a phone number to message' : undefined}
+              onClick={() => setMessageOpen(true)}
+            >
+              Message
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={
+                savingField === 'status' ||
+                statusValue === 'contacted' ||
+                statusValue === 'converted' ||
+                statusValue === 'lost'
+              }
+              onClick={() => updateLead('status', 'contacted')}
+            >
+              Mark contacted
+            </button>
+          </div>
         </td>
       </tr>
       {suggestions.length > 0 ? (
         <tr className="lead-suggestions-row">
-          <td colSpan={10}>
+          <td colSpan={11}>
             <div className="suggestion-row-inner" role="list" aria-label="AI suggestions">
               {suggestions.map((s) => (
                 <span key={s.id} className={suggestionToneClass(s.tone)} role="listitem">
-                  <span className="suggestion-icon" aria-hidden>
-                    {s.icon}
-                  </span>
+                  {s.icon ? (
+                    <span className="suggestion-icon" aria-hidden>
+                      {s.icon}
+                    </span>
+                  ) : null}
                   <span>{s.text}</span>
                 </span>
               ))}
@@ -168,7 +238,7 @@ export default function LeadRow({
       ) : null}
       {expanded ? (
         <tr className="lead-row-expanded">
-          <td colSpan={10}>
+          <td colSpan={11}>
             <div className="tasks-panel">
               <LeadTimeline lead={lead} tasks={tasks} />
               <h3 className="tasks-panel-title">Tasks for {lead.name}</h3>
@@ -224,6 +294,9 @@ export default function LeadRow({
             </div>
           </td>
         </tr>
+      ) : null}
+      {messageOpen ? (
+        <MessageModal lead={lead} onClose={() => setMessageOpen(false)} />
       ) : null}
     </Fragment>
   )

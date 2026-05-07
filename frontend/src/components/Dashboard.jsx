@@ -8,8 +8,10 @@ import {
 } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
-import { CRM_USER_STORAGE_KEY, CRM_USERS, LEAD_STATUSES } from '../constants/crm'
+import { CRM_USERS, LEAD_STATUSES } from '../constants/crm'
+import { useAuth } from '../hooks/useAuth.js'
 import { useRealtimeLeads } from '../hooks/useRealtimeLeads.js'
+import { isSalesperson, seesAllOrgLeads } from '../utils/access.js'
 import { isHotCategory, isNewHotLeadEvent, sortLeadsByScoreDesc } from '../utils/leadHot'
 import { playHotLeadChime } from '../utils/hotLeadSound.js'
 import { computeGlobalResponseStats } from '../utils/analyticsAggregates.js'
@@ -18,16 +20,6 @@ import { exportLeadsCsv } from '../utils/csvExport.js'
 import LeadRow from './LeadRow.jsx'
 import TaskModal from './TaskModal.jsx'
 import HotLeadToast from './HotLeadToast.jsx'
-
-function readStoredUser() {
-  try {
-    const v = localStorage.getItem(CRM_USER_STORAGE_KEY)
-    if (v && CRM_USERS.includes(v)) return v
-  } catch {
-    /* ignore */
-  }
-  return CRM_USERS[0]
-}
 
 function mergeRealtimeLead(prevList, row) {
   const idx = prevList.findIndex((l) => l.id === row.id)
@@ -50,6 +42,11 @@ function endOfDay(isoDate) {
 }
 
 export default function Dashboard() {
+  const { organization, profile } = useAuth()
+  const orgId = organization?.id
+  const profileName = profile?.full_name?.trim() || ''
+  const salesRestricted = isSalesperson(profile?.role)
+
   const [searchParams, setSearchParams] = useSearchParams()
   const focusLeadId = searchParams.get('focusLead')
 
@@ -61,7 +58,7 @@ export default function Dashboard() {
   const [taskModalLead, setTaskModalLead] = useState(null)
   const [myLeadsOnly, setMyLeadsOnly] = useState(false)
   const [hotOnly, setHotOnly] = useState(false)
-  const [currentUser, setCurrentUser] = useState(readStoredUser)
+  const [teamAssignees, setTeamAssignees] = useState([])
   const [hotToasts, setHotToasts] = useState([])
   const [pulseLeadIds, setPulseLeadIds] = useState(() => new Set())
 
@@ -81,12 +78,26 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
 
-    const { data: leadRows, error: leadsError } = await supabase
+    if (!orgId) {
+      setLoading(false)
+      setLeads([])
+      setTasks([])
+      return
+    }
+
+    let leadsQuery = supabase
       .from('leads')
       .select(
-        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded,industry_id,business_type_id,industries(name),business_types(name)',
+        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded,industry_id,business_type_id,organization_id,created_by,industries(name),business_types(name)',
       )
+      .eq('organization_id', orgId)
       .order('score', { ascending: false })
+
+    if (salesRestricted && profileName) {
+      leadsQuery = leadsQuery.eq('assigned_to', profileName)
+    }
+
+    const { data: leadRows, error: leadsError } = await leadsQuery
 
     if (leadsError) {
       setLoading(false)
@@ -102,6 +113,7 @@ export default function Dashboard() {
       const { data: tdata, error: tasksError } = await supabase
         .from('tasks')
         .select('id,lead_id,task_type,due_date,status,created_at,completed_at')
+        .eq('organization_id', orgId)
         .in('lead_id', ids)
         .order('due_date', { ascending: true })
 
@@ -113,10 +125,23 @@ export default function Dashboard() {
       taskRows = tdata ?? []
     }
 
+    let teamNames = []
+    if (orgId && seesAllOrgLeads(profile?.role)) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('organization_id', orgId)
+        .order('full_name', { ascending: true })
+      teamNames = [...new Set((profs ?? []).map((p) => p.full_name).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      )
+    }
+    setTeamAssignees(teamNames)
+
     setLeads(list)
     setTasks(taskRows)
     setLoading(false)
-  }, [])
+  }, [orgId, salesRestricted, profileName, profile?.role])
 
   useEffect(() => {
     startTransition(() => {
@@ -157,14 +182,6 @@ export default function Dashboard() {
     return () => window.clearTimeout(t)
   }, [focusLeadId, loading, leads, setSearchParams])
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(CRM_USER_STORAGE_KEY, currentUser)
-    } catch {
-      /* ignore */
-    }
-  }, [currentUser])
-
   const enqueueHotLeadAlert = useCallback((row) => {
     playHotLeadChime()
     const toastId = crypto.randomUUID()
@@ -201,14 +218,22 @@ export default function Dashboard() {
 
   const onRealtimeChange = useCallback(
     (payload) => {
-      if (!payload?.new?.id) return
-      setLeads((prev) => mergeRealtimeLead(prev, payload.new))
-      if (isNewHotLeadEvent(payload)) enqueueHotLeadAlert(payload.new)
+      const row = payload?.new
+      if (!row?.id) return
+      if (orgId && row.organization_id && row.organization_id !== orgId) return
+      if (salesRestricted && profileName && row.assigned_to?.trim() !== profileName) {
+        if (payload.eventType === 'UPDATE') {
+          setLeads((prev) => prev.filter((l) => l.id !== row.id))
+        }
+        return
+      }
+      setLeads((prev) => mergeRealtimeLead(prev, row))
+      if (isNewHotLeadEvent(payload)) enqueueHotLeadAlert(row)
     },
-    [enqueueHotLeadAlert],
+    [enqueueHotLeadAlert, orgId, salesRestricted, profileName],
   )
 
-  useRealtimeLeads({ onEvent: onRealtimeChange, enabled: !loading })
+  useRealtimeLeads({ onEvent: onRealtimeChange, enabled: !loading, organizationId: orgId })
 
   const dismissToast = useCallback((toastId) => {
     setHotToasts((prev) => prev.filter((t) => t.toastId !== toastId))
@@ -231,6 +256,15 @@ export default function Dashboard() {
     return [...s].sort()
   }, [leads])
 
+  const assigneeFilterOptions = useMemo(() => {
+    const set = new Set(teamAssignees)
+    for (const l of leads) {
+      if (l.assigned_to?.trim()) set.add(l.assigned_to.trim())
+    }
+    const arr = [...set].sort((a, b) => a.localeCompare(b))
+    return arr.length ? arr : CRM_USERS
+  }, [teamAssignees, leads])
+
   const filteredLeads = useMemo(() => {
     let list = leads
 
@@ -250,7 +284,10 @@ export default function Dashboard() {
       list = list.filter((l) => l.created_at && new Date(l.created_at) <= end)
     }
     if (hotOnly) list = list.filter((l) => isHotCategory(l.category))
-    if (myLeadsOnly) list = list.filter((l) => (l.assigned_to || '') === currentUser)
+    const mineOnly = salesRestricted || myLeadsOnly
+    if (mineOnly && profileName) {
+      list = list.filter((l) => (l.assigned_to || '').trim() === profileName)
+    }
     return list
   }, [
     leads,
@@ -261,7 +298,8 @@ export default function Dashboard() {
     dateTo,
     hotOnly,
     myLeadsOnly,
-    currentUser,
+    profileName,
+    salesRestricted,
   ])
 
   const responseStats = useMemo(() => computeGlobalResponseStats(leads), [leads])
@@ -297,7 +335,13 @@ export default function Dashboard() {
   }
 
   const hasAdvancedFilters =
-    filterSource || filterStatus || filterAssignee || dateFrom || dateTo || hotOnly || myLeadsOnly
+    filterSource ||
+    filterStatus ||
+    filterAssignee ||
+    dateFrom ||
+    dateTo ||
+    hotOnly ||
+    (!salesRestricted && myLeadsOnly)
 
   function handleExportCsv() {
     exportLeadsCsv(filteredLeads, 'leads-filtered.csv')
@@ -342,25 +386,16 @@ export default function Dashboard() {
 
       <div className="crm-toolbar card dashboard-toolbar">
         <div className="crm-toolbar-row">
-          <label className="inline-field">
-            <span>I am (dev)</span>
-            <select
-              value={currentUser}
-              onChange={(e) => setCurrentUser(e.target.value)}
-              className="table-select"
-            >
-              {CRM_USERS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </label>
+          <span className="inline-field muted dashboard-you-are">
+            Signed in as <strong>{profileName || '—'}</strong>
+            {salesRestricted ? <span className="subtle"> · salesperson view</span> : null}
+          </span>
           <label className="inline-check">
             <input
               type="checkbox"
-              checked={myLeadsOnly}
+              checked={salesRestricted ? true : myLeadsOnly}
               onChange={(e) => setMyLeadsOnly(e.target.checked)}
+              disabled={salesRestricted}
             />
             <span>My leads only</span>
           </label>
@@ -416,7 +451,7 @@ export default function Dashboard() {
             >
               <option value="">Everyone</option>
               <option value="__unassigned__">Unassigned</option>
-              {CRM_USERS.map((u) => (
+              {assigneeFilterOptions.map((u) => (
                 <option key={u} value={u}>
                   {u}
                 </option>
@@ -491,6 +526,7 @@ export default function Dashboard() {
                 <th>Source</th>
                 <th>Status</th>
                 <th>Assign to</th>
+                <th>Suggested next action</th>
                 <th>Follow-up</th>
                 <th></th>
               </tr>
@@ -501,6 +537,9 @@ export default function Dashboard() {
                   key={lead.id}
                   lead={lead}
                   tasks={tasksByLeadId[lead.id] ?? []}
+                  assigneeOptions={
+                    salesRestricted && profileName ? [profileName] : assigneeFilterOptions
+                  }
                   expanded={expandedId === lead.id}
                   pulseHot={pulseLeadIds.has(lead.id)}
                   onToggleExpand={() =>

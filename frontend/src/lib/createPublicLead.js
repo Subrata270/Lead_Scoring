@@ -1,5 +1,12 @@
 import { calculateLeadScore, SCORING_DEFAULT_BUDGETS } from '../utils/leadScoring.js'
-import { CRM_USERS } from '../constants/crm.js'
+import { ACTIVITY_TYPES } from '../constants/activityTypes.js'
+import { recordActivity } from '../services/activityEngine.js'
+import { recordInitialScore } from '../services/rescoreLead.js'
+import {
+  createHotLeadNotification,
+} from '../services/notificationService.js'
+import { isHotCategory } from '../utils/leadHot.js'
+import { resolveLeadAssignee, recordAssignmentOutcome } from '../services/assignmentEngine.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -14,15 +21,6 @@ function startOfTomorrowUtc() {
   d.setUTCDate(d.getUTCDate() + 1)
   d.setUTCHours(9, 0, 0, 0)
   return d.toISOString()
-}
-
-async function pickRotatedAssignee(adminClient, organizationId = null) {
-  let q = adminClient.from('leads').select('*', { count: 'exact', head: true })
-  if (organizationId) q = q.eq('organization_id', organizationId)
-  const { count, error } = await q
-  if (error) throw error
-  const n = Number(count) || 0
-  return CRM_USERS[n % CRM_USERS.length]
 }
 
 /**
@@ -124,9 +122,28 @@ export async function createPublicLead(adminClient, body, opts = {}) {
     mediumBudget,
   })
 
+  const { data: indRow } = await adminClient
+    .from('industries')
+    .select('name')
+    .eq('id', industry_id)
+    .maybeSingle()
+  const industryName = indRow?.name ?? ''
+
   let assigned_to
+  let matchedRule = null
+  let assignMethod = 'round_robin'
   try {
-    assigned_to = await pickRotatedAssignee(adminClient, organization_id)
+    const result = await resolveLeadAssignee(
+      {
+        lead: { source, budget, urgency, industry_id },
+        industryName,
+        organizationId: organization_id,
+      },
+      adminClient,
+    )
+    assigned_to = result.assignee
+    matchedRule = result.matchedRule
+    assignMethod = result.method
   } catch (e) {
     return { ok: false, status: 500, error: e?.message ?? 'Failed to pick assignee' }
   }
@@ -159,6 +176,38 @@ export async function createPublicLead(adminClient, body, opts = {}) {
   let task = null
   let taskWarning = null
 
+  await recordActivity(
+    {
+      leadId,
+      organizationId: organization_id,
+      userId: null,
+      activityType: ACTIVITY_TYPES.LEAD_CREATED,
+      description: `Lead created via public API: ${name}`,
+      metadata: { source, score, category, assigned_to },
+    },
+    adminClient,
+  )
+
+  await recordInitialScore(inserted, null, adminClient)
+
+  if (isHotCategory(category)) {
+    await createHotLeadNotification(inserted, adminClient)
+  }
+
+  if (assigned_to) {
+    await recordAssignmentOutcome(
+      {
+        lead: inserted,
+        assignee: assigned_to,
+        matchedRule,
+        organizationId: organization_id,
+        userId: null,
+        method: assignMethod,
+      },
+      adminClient,
+    )
+  }
+
   if (category === 'hot') {
     const due = new Date().toISOString()
     const { data: taskRow, error: taskErr } = await adminClient
@@ -174,7 +223,20 @@ export async function createPublicLead(adminClient, body, opts = {}) {
       .select()
       .single()
     if (taskErr) taskWarning = taskErr.message
-    else task = taskRow
+    else {
+      task = taskRow
+      await recordActivity(
+        {
+          leadId,
+          organizationId: organization_id,
+          userId: null,
+          activityType: ACTIVITY_TYPES.TASK_CREATED,
+          description: 'Auto task created (call)',
+          metadata: { task_id: taskRow.id, task_type: 'call' },
+        },
+        adminClient,
+      )
+    }
   } else if (category === 'warm') {
     const due = startOfTomorrowUtc()
     const { data: taskRow, error: taskErr } = await adminClient
@@ -190,7 +252,20 @@ export async function createPublicLead(adminClient, body, opts = {}) {
       .select()
       .single()
     if (taskErr) taskWarning = taskErr.message
-    else task = taskRow
+    else {
+      task = taskRow
+      await recordActivity(
+        {
+          leadId,
+          organizationId: organization_id,
+          userId: null,
+          activityType: ACTIVITY_TYPES.TASK_CREATED,
+          description: 'Auto task created (follow-up)',
+          metadata: { task_id: taskRow.id, task_type: 'follow-up' },
+        },
+        adminClient,
+      )
+    }
   }
 
   return {

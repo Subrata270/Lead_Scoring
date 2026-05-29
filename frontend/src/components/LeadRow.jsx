@@ -1,10 +1,19 @@
 import { Fragment, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { CRM_USERS, LEAD_STATUSES } from '../constants/crm'
-import { countOverduePendingTasks, isTaskOverdue } from '../utils/taskHelpers'
-import { formatTimeToFirstAction, isHotNow } from '../utils/leadHot'
+import { ACTIVITY_TYPES } from '../constants/activityTypes'
+import { countOverduePendingTasks } from '../utils/taskHelpers'
+import { isHotNow } from '../utils/leadHot'
 import { getPrimarySuggestion, getSuggestionsForLead } from '../utils/aiSuggestions.js'
-import LeadTimeline from './LeadTimeline.jsx'
+import { useAuth } from '../hooks/useAuth.js'
+import { useScoringConfig } from '../hooks/useScoringConfig.js'
+import { recordActivity } from '../services/activityEngine'
+import { rescoreLead } from '../services/rescoreLead'
+import {
+  createLeadAssignedNotification,
+  createLeadConvertedNotification,
+} from '../services/notificationService'
+import LeadDetailTabs from './LeadDetailTabs.jsx'
 import MessageModal from './MessageModal.jsx'
 
 function categoryPillClass(category) {
@@ -34,6 +43,33 @@ function digitsForTel(phone) {
   return s.replace(/[^\d+]/g, '')
 }
 
+function IconBtn({ title, onClick, disabled, href, children, className = '' }) {
+  if (href && !disabled) {
+    return (
+      <a
+        href={href}
+        className={`lead-icon-btn${className ? ` ${className}` : ''}`}
+        title={title}
+        aria-label={title}
+      >
+        {children}
+      </a>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className={`lead-icon-btn${disabled ? ' lead-icon-btn--disabled' : ''}${className ? ` ${className}` : ''}`}
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
 export default function LeadRow({
   lead,
   tasks,
@@ -45,52 +81,199 @@ export default function LeadRow({
   onTaskPatch,
   onAddTask,
 }) {
+  const { user, organization } = useAuth()
+  const orgId = lead.organization_id ?? organization?.id
+  const userId = user?.id ?? null
+
   const [savingField, setSavingField] = useState(null)
   const [messageOpen, setMessageOpen] = useState(false)
+  const [messageLogged, setMessageLogged] = useState(false)
+  const [detailTab, setDetailTab] = useState('overview')
 
-  const suggestions = useMemo(() => getSuggestionsForLead(lead, tasks), [lead, tasks])
+  const { config: scoringRow } = useScoringConfig(
+    expanded ? lead.industry_id : null,
+    expanded ? lead.business_type_id : null,
+    expanded ? orgId : null,
+  )
+
   const primary = useMemo(() => getPrimarySuggestion(lead, tasks), [lead, tasks])
+  const suggestions = useMemo(() => getSuggestionsForLead(lead, tasks), [lead, tasks])
   const telDigits = useMemo(() => digitsForTel(lead.phone), [lead.phone])
 
   const overdueCount = countOverduePendingTasks(tasks)
   const statusValue = LEAD_STATUSES.includes(lead.status) ? lead.status : 'new'
 
+  async function applyLeadUpdate(patch, activityContext) {
+    const { error } = await supabase.from('leads').update(patch).eq('id', lead.id)
+    if (error) throw error
+
+    let updatedLead = { ...lead, ...patch }
+
+    if (activityContext) {
+      await recordActivity({
+        leadId: lead.id,
+        organizationId: orgId,
+        userId,
+        activityType: activityContext.type,
+        description: activityContext.description,
+        metadata: activityContext.metadata ?? {},
+      })
+    }
+
+    const rescoreReason =
+      activityContext?.rescoreReason ??
+      (activityContext?.type === ACTIVITY_TYPES.STATUS_CHANGED
+        ? `Status changed to ${patch.status ?? lead.status}`
+        : 'Lead updated')
+
+    const { lead: rescored } = await rescoreLead(updatedLead, {
+      reason: rescoreReason,
+      userId,
+    })
+    updatedLead = rescored
+    onLeadPatch(lead.id, updatedLead)
+    return updatedLead
+  }
+
   async function updateLead(field, value) {
     setSavingField(field)
-    const patch = { [field]: value }
-    if (field === 'status') {
-      const wasNew = statusValue === 'new' && value !== 'new'
-      if (wasNew && !lead.first_status_changed_at) {
-        patch.first_status_changed_at = new Date().toISOString()
+    try {
+      const patch = { [field]: value }
+
+      if (field === 'status') {
+        const wasNew = statusValue === 'new' && value !== 'new'
+        if (wasNew && !lead.first_status_changed_at) {
+          patch.first_status_changed_at = new Date().toISOString()
+        }
+        if (value === 'contacted' || value === 'converted') {
+          patch.responded = true
+        }
       }
+
+      const oldAssignee = lead.assigned_to
+      let activityContext = null
+
+      if (field === 'status') {
+        activityContext = {
+          type: ACTIVITY_TYPES.STATUS_CHANGED,
+          description: `Status changed to ${value}`,
+          metadata: { from: statusValue, to: value },
+          rescoreReason: `Status changed to ${value}`,
+        }
+      } else if (field === 'assigned_to') {
+        activityContext = {
+          type: ACTIVITY_TYPES.LEAD_ASSIGNED,
+          description: `Lead assigned to ${value || 'Unassigned'}`,
+          metadata: { from: oldAssignee, to: value },
+          rescoreReason: 'Lead assignment updated',
+        }
+      } else {
+        activityContext = {
+          type: ACTIVITY_TYPES.LEAD_UPDATED,
+          description: `Lead ${field} updated`,
+          metadata: { field, value },
+          rescoreReason: `Lead ${field} updated`,
+        }
+      }
+
+      const updatedLead = await applyLeadUpdate(patch, activityContext)
+
+      if (field === 'assigned_to' && value && value !== oldAssignee) {
+        await createLeadAssignedNotification(updatedLead, value)
+      }
+
+      if (field === 'status' && value === 'converted') {
+        await recordActivity({
+          leadId: lead.id,
+          organizationId: orgId,
+          userId,
+          activityType: ACTIVITY_TYPES.LEAD_CONVERTED,
+          description: `${lead.name} marked as converted`,
+        })
+        await createLeadConvertedNotification(updatedLead)
+      }
+
+      if (field === 'status' && value === 'lost') {
+        await recordActivity({
+          leadId: lead.id,
+          organizationId: orgId,
+          userId,
+          activityType: ACTIVITY_TYPES.LEAD_LOST,
+          description: `${lead.name} marked as lost`,
+        })
+      }
+    } catch (err) {
+      console.error('[LeadRow] updateLead failed:', err?.message ?? err)
+    } finally {
+      setSavingField(null)
     }
-    const { error } = await supabase.from('leads').update(patch).eq('id', lead.id)
-    setSavingField(null)
-    if (!error) onLeadPatch(lead.id, patch)
   }
 
   async function markTaskDone(taskId) {
+    const task = tasks.find((t) => t.id === taskId)
     const completed_at = new Date().toISOString()
+
     let { error } = await supabase
       .from('tasks')
       .update({ status: 'done', completed_at })
       .eq('id', taskId)
+
     if (error) {
       ;({ error } = await supabase.from('tasks').update({ status: 'done' }).eq('id', taskId))
       if (!error) onTaskPatch(taskId, { status: 'done' })
     } else {
       onTaskPatch(taskId, { status: 'done', completed_at })
     }
+
+    if (error) return
+
+    await recordActivity({
+      leadId: lead.id,
+      organizationId: orgId,
+      userId,
+      activityType: ACTIVITY_TYPES.TASK_COMPLETED,
+      description: `Task completed (${task?.task_type ?? 'task'})`,
+      metadata: { task_id: taskId, task_type: task?.task_type },
+    })
+
+    const leadPatch = { responded: true }
+    const { error: leadErr } = await supabase.from('leads').update(leadPatch).eq('id', lead.id)
+    if (!leadErr) {
+      const updatedLead = { ...lead, ...leadPatch }
+      const { lead: rescored } = await rescoreLead(updatedLead, {
+        reason: 'Task completed — engagement signal',
+        userId,
+      })
+      onLeadPatch(lead.id, rescored)
+    }
   }
 
-  const ttf = formatTimeToFirstAction(lead.created_at, lead.first_status_changed_at)
+  async function handleMessageGenerated(channel) {
+    if (messageLogged) return
+    setMessageLogged(true)
+    await recordActivity({
+      leadId: lead.id,
+      organizationId: orgId,
+      userId,
+      activityType: ACTIVITY_TYPES.MESSAGE_GENERATED,
+      description: `Sales message generated (${channel})`,
+      metadata: { channel },
+    })
+  }
 
-  const rowClass = [
-    rowHeatClass(lead.category),
-    pulseHot ? 'lead-row--hot-pulse' : '',
-  ]
+  const rowClass = [rowHeatClass(lead.category), pulseHot ? 'lead-row--hot-pulse' : '']
     .filter(Boolean)
     .join(' ')
+
+  function handleExpandToggle() {
+    if (!expanded) setDetailTab('overview')
+    onToggleExpand()
+  }
+
+  function handleTimelineClick() {
+    setDetailTab('timeline')
+    if (!expanded) onToggleExpand()
+  }
 
   return (
     <Fragment>
@@ -99,28 +282,28 @@ export default function LeadRow({
           <button
             type="button"
             className="link-button expand-toggle"
-            onClick={onToggleExpand}
+            onClick={handleExpandToggle}
             aria-expanded={expanded}
           >
             {expanded ? '▼' : '▶'}
           </button>
-          {lead.name}
+          <span className="lead-name-text">{lead.name}</span>
           {isHotNow(lead) ? (
-            <span className="badge badge-hot-now" title="Created in the last 5 minutes">
-              🔥 HOT NOW
+            <span className="badge badge-hot-now badge-hot-now--compact" title="Hot in last 5 min">
+              🔥
             </span>
           ) : null}
         </td>
-        <td className="num">{lead.score}</td>
+        <td className="num lead-score-cell">{lead.score}</td>
         <td>
-          <span className={categoryPillClass(lead.category)}>{lead.category}</span>
+          <span className={`${categoryPillClass(lead.category)} pill--compact`}>{lead.category}</span>
         </td>
-        <td>{lead.industries?.name ?? '—'}</td>
-        <td>{lead.business_types?.name ?? '—'}</td>
-        <td>{lead.source}</td>
+        <td className="lead-cell-truncate">{lead.industries?.name ?? '—'}</td>
+        <td className="lead-cell-truncate">{lead.business_types?.name ?? '—'}</td>
+        <td className="lead-cell-truncate">{lead.source}</td>
         <td>
           <select
-            className="table-select"
+            className="table-select table-select--compact"
             value={statusValue}
             disabled={savingField === 'status'}
             onChange={(e) => updateLead('status', e.target.value)}
@@ -134,7 +317,7 @@ export default function LeadRow({
         </td>
         <td>
           <select
-            className="table-select"
+            className="table-select table-select--compact"
             value={lead.assigned_to || ''}
             disabled={savingField === 'assigned_to'}
             onChange={(e) => updateLead('assigned_to', e.target.value)}
@@ -150,7 +333,7 @@ export default function LeadRow({
         <td className="lead-suggestion-cell">
           {primary ? (
             <span
-              className={`${suggestionToneClass(primary.tone)} suggestion-chip--compact`}
+              className={`${suggestionToneClass(primary.tone)} suggestion-chip--compact suggestion-chip--mini`}
               title={primary.text}
             >
               {primary.text}
@@ -161,50 +344,57 @@ export default function LeadRow({
         </td>
         <td>
           {overdueCount > 0 ? (
-            <span className="badge badge-overdue" title="Overdue pending tasks">
-              {overdueCount} overdue
+            <span className="badge badge-overdue badge-overdue--compact" title="Overdue tasks">
+              {overdueCount}
             </span>
           ) : (
             <span className="muted subtle">—</span>
           )}
         </td>
         <td className="lead-actions-cell">
-          <div className="lead-actions-cluster">
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => onAddTask(lead)}
-            >
-              Add task
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setMessageOpen(true)}
-            >
-              Generate message
-            </button>
-            {telDigits ? (
-              <a className="btn btn-secondary btn-sm" href={`tel:${telDigits}`}>
-                Call
-              </a>
-            ) : (
-              <span className="btn btn-secondary btn-sm btn-sm--disabled" title="No phone on file">
-                Call
-              </span>
-            )}
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
+          <div className="lead-actions-cluster lead-actions-cluster--icons">
+            <IconBtn
+              title="Call"
+              href={telDigits ? `tel:${telDigits}` : undefined}
               disabled={!telDigits}
-              title={!telDigits ? 'Add a phone number to message' : undefined}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </IconBtn>
+            <IconBtn
+              title="Message"
+              disabled={!telDigits}
               onClick={() => setMessageOpen(true)}
             >
-              Message
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M21 15a2 2 0 0 1-2 2H8l-5 3V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </IconBtn>
+            <IconBtn title="Add task" onClick={() => onAddTask(lead)}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M9 11h6M12 8v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" strokeWidth="1.6" />
+              </svg>
+            </IconBtn>
+            <IconBtn title="Timeline & details" onClick={handleTimelineClick}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M12 8v4l3 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </IconBtn>
+            <IconBtn
+              title="Mark contacted"
               disabled={
                 savingField === 'status' ||
                 statusValue === 'contacted' ||
@@ -213,23 +403,20 @@ export default function LeadRow({
               }
               onClick={() => updateLead('status', 'contacted')}
             >
-              Mark contacted
-            </button>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="m5 12 4 4L19 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </IconBtn>
           </div>
         </td>
       </tr>
-      {suggestions.length > 0 ? (
-        <tr className="lead-suggestions-row">
+      {suggestions.length > 0 && !expanded ? (
+        <tr className="lead-suggestions-row lead-suggestions-row--compact">
           <td colSpan={11}>
-            <div className="suggestion-row-inner" role="list" aria-label="AI suggestions">
+            <div className="suggestion-row-inner suggestion-row-inner--compact" role="list">
               {suggestions.map((s) => (
                 <span key={s.id} className={suggestionToneClass(s.tone)} role="listitem">
-                  {s.icon ? (
-                    <span className="suggestion-icon" aria-hidden>
-                      {s.icon}
-                    </span>
-                  ) : null}
-                  <span>{s.text}</span>
+                  {s.text}
                 </span>
               ))}
             </div>
@@ -239,64 +426,26 @@ export default function LeadRow({
       {expanded ? (
         <tr className="lead-row-expanded">
           <td colSpan={11}>
-            <div className="tasks-panel">
-              <LeadTimeline lead={lead} tasks={tasks} />
-              <h3 className="tasks-panel-title">Tasks for {lead.name}</h3>
-              {ttf ? (
-                <p className="muted ttf-line">
-                  Time to first status change: <strong>{ttf}</strong>
-                </p>
-              ) : null}
-              {tasks.length === 0 ? (
-                <p className="muted">No tasks yet.</p>
-              ) : (
-                <table className="nested-table">
-                  <thead>
-                    <tr>
-                      <th>Type</th>
-                      <th>Due</th>
-                      <th>Status</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tasks.map((t) => (
-                      <tr key={t.id}>
-                        <td>{t.task_type}</td>
-                        <td>
-                          {new Date(t.due_date).toLocaleString(undefined, {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })}
-                          {isTaskOverdue(t.due_date, t.status) ? (
-                            <span className="badge badge-overdue nested-overdue">overdue</span>
-                          ) : null}
-                        </td>
-                        <td>{t.status}</td>
-                        <td>
-                          {t.status === 'pending' ? (
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => markTaskDone(t.id)}
-                            >
-                              Mark done
-                            </button>
-                          ) : (
-                            <span className="muted subtle">Done</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            <div className="tasks-panel tasks-panel--tabs">
+              <LeadDetailTabs
+                lead={lead}
+                tasks={tasks}
+                organizationId={orgId}
+                scoringRow={scoringRow}
+                onMarkTaskDone={markTaskDone}
+                onAddTask={onAddTask}
+                initialTab={detailTab}
+              />
             </div>
           </td>
         </tr>
       ) : null}
       {messageOpen ? (
-        <MessageModal lead={lead} onClose={() => setMessageOpen(false)} />
+        <MessageModal
+          lead={lead}
+          onClose={() => setMessageOpen(false)}
+          onMessageGenerated={handleMessageGenerated}
+        />
       ) : null}
     </Fragment>
   )

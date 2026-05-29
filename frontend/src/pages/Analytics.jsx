@@ -6,11 +6,13 @@ import {
   FunnelStageBarChart,
   IndustryPerformanceBarChart,
   LeadActivityHeatmap,
+  LeadAgingBarChart,
   LeadsPerDayLineChart,
   SourceConversionBarChart,
   SourceVolumeConversionChart,
 } from '../components/Charts.jsx'
 import { useAnalyticsData } from '../hooks/useAnalyticsData.js'
+import { useOpenPipelineLeads } from '../hooks/useOpenPipelineLeads.js'
 import { useAuth } from '../hooks/useAuth.js'
 import { formatDurationMs } from '../utils/responseTimeFormat'
 import { isSalesperson } from '../utils/access.js'
@@ -32,6 +34,9 @@ import {
   topPerformerByConversion,
   topPerformerByResponseSpeed,
 } from '../utils/analyticsHelpers.js'
+import { aggregateLeadAging } from '../utils/leadAging.js'
+import { useManagerCopilotInsights } from '../hooks/useManagerCopilotInsights.js'
+import ManagerRiskInsights from '../components/ManagerRiskInsights.jsx'
 
 function rangeLabel(preset, customFrom, customTo) {
   if (preset === DATE_PRESETS.TODAY) return 'Today'
@@ -67,6 +72,14 @@ export default function Analytics() {
   )
 
   const { leads, tasks, loading, error, reload } = useAnalyticsData(range, analyticsScope)
+  const { leads: pipelineLeads, loading: agingLoading } = useOpenPipelineLeads(
+    organization?.id ?? null,
+    analyticsScope.assignedToFilter,
+  )
+  const { insights: managerInsights, loading: managerInsightsLoading } = useManagerCopilotInsights(
+    organization?.id ?? null,
+    analyticsScope.assignedToFilter,
+  )
 
   const tasksByLead = useMemo(() => indexTasksByLeadId(tasks), [tasks])
   const funnel = useMemo(() => computeFunnelMetrics(leads, tasksByLead), [leads, tasksByLead])
@@ -79,6 +92,10 @@ export default function Analytics() {
   const byBusinessType = useMemo(() => aggregateByBusinessType(leads), [leads])
   const perDay = useMemo(() => leadsCreatedPerDay(leads), [leads])
   const heatmap = useMemo(() => buildActivityHeatmap(leads), [leads])
+  const agingBuckets = useMemo(
+    () => aggregateLeadAging(pipelineLeads, { excludeClosed: false }),
+    [pipelineLeads],
+  )
 
   const insights = useMemo(
     () => generateDashboardInsights({ leads, bySource, byRep, byIndustry }),
@@ -214,6 +231,8 @@ export default function Analytics() {
               </ul>
             </section>
           ) : null}
+
+          <ManagerRiskInsights insights={managerInsights} loading={managerInsightsLoading} />
 
           <section className="analytics-section">
             <h2 className="analytics-section-title">Conversion funnel</h2>
@@ -412,6 +431,35 @@ export default function Analytics() {
                       <td className="num">{r.conversions}</td>
                       <td className="num">{r.conversion_rate.toFixed(1)}%</td>
                       <td className="num">{Math.round(r.avg_budget || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="analytics-section card">
+            <h2 className="analytics-section-title">Lead aging</h2>
+            <p className="muted section-hint">
+              Open pipeline leads (excluding converted/lost) grouped by days since creation.
+            </p>
+            <LeadAgingBarChart data={agingBuckets} />
+            {agingLoading ? <p className="muted subtle">Refreshing aging data…</p> : null}
+            <div className="table-wrap analytics-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Bucket</th>
+                    <th className="num">Count</th>
+                    <th className="num">Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agingBuckets.map((b) => (
+                    <tr key={b.bucket}>
+                      <td>{b.label}</td>
+                      <td className="num">{b.count}</td>
+                      <td className="num">{b.percentage.toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>

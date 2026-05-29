@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabaseClient'
 import { CRM_USERS, LEAD_STATUSES } from '../constants/crm'
 import { useAuth } from '../hooks/useAuth.js'
 import { useRealtimeLeads } from '../hooks/useRealtimeLeads.js'
+import { syncOverdueTaskNotifications, syncAgingLeadNotifications } from '../services/notificationService.js'
 import { isSalesperson, seesAllOrgLeads } from '../utils/access.js'
 import { isHotCategory, isNewHotLeadEvent, sortLeadsByScoreDesc } from '../utils/leadHot'
 import { playHotLeadChime } from '../utils/hotLeadSound.js'
@@ -67,6 +68,8 @@ export default function Dashboard() {
   const [filterAssignee, setFilterAssignee] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const [, bumpHotNow] = useReducer((x) => x + 1, 0)
   useEffect(() => {
@@ -88,7 +91,7 @@ export default function Dashboard() {
     let leadsQuery = supabase
       .from('leads')
       .select(
-        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded,industry_id,business_type_id,organization_id,created_by,industries(name),business_types(name)',
+        'id,name,score,category,source,status,assigned_to,created_at,first_status_changed_at,responded,budget,urgency,phone,email,industry_id,business_type_id,organization_id,created_by,industries(name),business_types(name)',
       )
       .eq('organization_id', orgId)
       .order('score', { ascending: false })
@@ -150,6 +153,12 @@ export default function Dashboard() {
   }, [loadData])
 
   useEffect(() => {
+    if (!orgId || loading) return
+    void syncOverdueTaskNotifications(orgId)
+    void syncAgingLeadNotifications(orgId)
+  }, [orgId, loading])
+
+  useEffect(() => {
     if (!focusLeadId || loading) return
     if (!leads.some((l) => l.id === focusLeadId)) return
 
@@ -161,6 +170,7 @@ export default function Dashboard() {
       setFilterAssignee('')
       setDateFrom('')
       setDateTo('')
+      setSearchQuery('')
       setExpandedId(focusLeadId)
     })
 
@@ -268,6 +278,17 @@ export default function Dashboard() {
   const filteredLeads = useMemo(() => {
     let list = leads
 
+    const q = searchQuery.trim().toLowerCase()
+    if (q) {
+      list = list.filter((l) => {
+        const hay = [l.name, l.phone, l.email, l.source, l.assigned_to]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return hay.includes(q)
+      })
+    }
+
     if (filterSource) list = list.filter((l) => (l.source || '') === filterSource)
     if (filterStatus) list = list.filter((l) => (l.status || 'new') === filterStatus)
     if (filterAssignee === '__unassigned__') {
@@ -291,6 +312,7 @@ export default function Dashboard() {
     return list
   }, [
     leads,
+    searchQuery,
     filterSource,
     filterStatus,
     filterAssignee,
@@ -325,6 +347,7 @@ export default function Dashboard() {
   }
 
   const clearFilters = () => {
+    setSearchQuery('')
     setMyLeadsOnly(false)
     setHotOnly(false)
     setFilterSource('')
@@ -334,7 +357,8 @@ export default function Dashboard() {
     setDateTo('')
   }
 
-  const hasAdvancedFilters =
+  const hasActiveFilters =
+    searchQuery ||
     filterSource ||
     filterStatus ||
     filterAssignee ||
@@ -343,98 +367,71 @@ export default function Dashboard() {
     hotOnly ||
     (!salesRestricted && myLeadsOnly)
 
+  const hasAdvancedFilters =
+    filterSource || dateFrom || dateTo || hotOnly || (!salesRestricted && myLeadsOnly)
+
   function handleExportCsv() {
     exportLeadsCsv(filteredLeads, 'leads-filtered.csv')
   }
 
   return (
-    <div className="page page-wide page-dashboard dashboard-root dashboard-layout">
-      <header className="page-header dashboard-page-header">
-        <div className="dashboard-header-top">
-          <div className="dashboard-header-titles">
-            <h1>Dashboard</h1>
-            <p className="page-subtitle">Leads by score · realtime updates</p>
-          </div>
-          <Link className="btn btn-primary btn-sm dashboard-add-lead" to="/add-lead">
-            Add lead
-          </Link>
+    <div className="page page-wide page-dashboard dashboard-root dashboard-layout dashboard-layout--crm">
+      <header className="dashboard-crm-header">
+        <div className="dashboard-crm-header-text">
+          <h1 className="dashboard-crm-title">Dashboard</h1>
+          <p className="dashboard-crm-subtitle">Monitor leads, assignments and conversions</p>
         </div>
-        <div className="response-metrics dashboard-kpis" aria-label="Global response time">
-          <div className="response-metric dashboard-kpi">
-            <span className="response-metric-label">Avg response</span>
-            <strong className="response-metric-value">
-              {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
-            </strong>
-            <span className="response-metric-hint">
-              {responseStats.count ? `${responseStats.count} with first action` : 'No samples yet'}
-            </span>
-          </div>
-          <div className="response-metric dashboard-kpi">
-            <span className="response-metric-label">Fastest</span>
-            <strong className="response-metric-value">
-              {responseStats.fastest != null ? formatDurationMs(responseStats.fastest) : '—'}
-            </strong>
-          </div>
-          <div className="response-metric dashboard-kpi">
-            <span className="response-metric-label">Slowest</span>
-            <strong className="response-metric-value">
-              {responseStats.slowest != null ? formatDurationMs(responseStats.slowest) : '—'}
-            </strong>
-          </div>
+        <div className="dashboard-crm-header-actions">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleExportCsv}>
+            Export
+          </button>
+          <Link className="btn btn-primary btn-sm dashboard-add-lead" to="/add-lead">
+            + Add Lead
+          </Link>
         </div>
       </header>
 
-      <div className="crm-toolbar card dashboard-toolbar">
-        <div className="crm-toolbar-row">
-          <span className="inline-field muted dashboard-you-are">
-            Signed in as <strong>{profileName || '—'}</strong>
-            {salesRestricted ? <span className="subtle"> · salesperson view</span> : null}
-          </span>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              checked={salesRestricted ? true : myLeadsOnly}
-              onChange={(e) => setMyLeadsOnly(e.target.checked)}
-              disabled={salesRestricted}
-            />
-            <span>My leads only</span>
-          </label>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              checked={hotOnly}
-              onChange={(e) => setHotOnly(e.target.checked)}
-            />
-            <span>Only hot leads</span>
-          </label>
-          <button type="button" className="btn btn-secondary" onClick={handleExportCsv}>
-            Export CSV
-          </button>
+      <div className="dashboard-kpi-row" aria-label="Key metrics">
+        <div className="dashboard-kpi-compact">
+          <span className="dashboard-kpi-label">Total Leads</span>
+          <strong className="dashboard-kpi-value">{stats.total}</strong>
         </div>
-        <div className="filters-advanced">
-          <label className="inline-field">
-            <span>Source</span>
-            <select
-              className="table-select"
-              value={filterSource}
-              onChange={(e) => setFilterSource(e.target.value)}
-            >
-              <option value="">All sources</option>
-              {uniqueSources.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+        <div className="dashboard-kpi-compact dashboard-kpi-compact--hot">
+          <span className="dashboard-kpi-label">Hot Leads</span>
+          <strong className="dashboard-kpi-value">{stats.hot}</strong>
+        </div>
+        <div className="dashboard-kpi-compact">
+          <span className="dashboard-kpi-label">Pending Tasks</span>
+          <strong className="dashboard-kpi-value">{stats.pending}</strong>
+        </div>
+        <div className="dashboard-kpi-compact">
+          <span className="dashboard-kpi-label">Avg Response</span>
+          <strong className="dashboard-kpi-value">
+            {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
+          </strong>
+        </div>
+      </div>
+
+      <div className="dashboard-filter-bar">
+        <div className="dashboard-filter-primary">
+          <label className="dashboard-search">
+            <span className="sr-only">Search leads</span>
+            <input
+              type="search"
+              className="dashboard-search-input"
+              placeholder="Search name, phone, email…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </label>
-          <label className="inline-field">
-            <span>Status</span>
+          <label className="dashboard-filter-field">
+            <span className="dashboard-filter-label">Status</span>
             <select
-              className="table-select"
+              className="table-select table-select--compact"
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
             >
-              <option value="">All statuses</option>
+              <option value="">All</option>
               {LEAD_STATUSES.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -442,10 +439,10 @@ export default function Dashboard() {
               ))}
             </select>
           </label>
-          <label className="inline-field">
-            <span>Assigned</span>
+          <label className="dashboard-filter-field">
+            <span className="dashboard-filter-label">Assigned</span>
             <select
-              className="table-select"
+              className="table-select table-select--compact"
               value={filterAssignee}
               onChange={(e) => setFilterAssignee(e.target.value)}
             >
@@ -458,52 +455,90 @@ export default function Dashboard() {
               ))}
             </select>
           </label>
-          <label className="inline-field">
-            <span>From</span>
-            <input
-              type="date"
-              className="table-select filter-date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-          </label>
-          <label className="inline-field">
-            <span>To</span>
-            <input
-              type="date"
-              className="table-select filter-date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="stats-row" aria-live="polite">
-          <span>
-            <strong>{stats.total}</strong> leads (filtered)
-          </span>
-          <span className="stats-hot">
-            <strong>{stats.hot}</strong> hot
-          </span>
-          <span>
-            <strong>{stats.pending}</strong> tasks pending
-          </span>
-          {hasAdvancedFilters ? (
+          <button
+            type="button"
+            className={`btn btn-secondary btn-sm dashboard-advanced-toggle${advancedOpen ? ' is-active' : ''}`}
+            onClick={() => setAdvancedOpen((v) => !v)}
+          >
+            Advanced Filters
+            {hasAdvancedFilters ? <span className="dashboard-filter-dot" aria-hidden /> : null}
+          </button>
+          {hasActiveFilters ? (
             <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
-              Clear filters
+              Clear
             </button>
           ) : null}
         </div>
+        {advancedOpen ? (
+          <div className="dashboard-filter-advanced">
+            <label className="dashboard-filter-field">
+              <span className="dashboard-filter-label">Source</span>
+              <select
+                className="table-select table-select--compact"
+                value={filterSource}
+                onChange={(e) => setFilterSource(e.target.value)}
+              >
+                <option value="">All sources</option>
+                {uniqueSources.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dashboard-filter-field">
+              <span className="dashboard-filter-label">From</span>
+              <input
+                type="date"
+                className="table-select filter-date table-select--compact"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
+            </label>
+            <label className="dashboard-filter-field">
+              <span className="dashboard-filter-label">To</span>
+              <input
+                type="date"
+                className="table-select filter-date table-select--compact"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
+            </label>
+            <label className="dashboard-filter-check">
+              <input
+                type="checkbox"
+                checked={hotOnly}
+                onChange={(e) => setHotOnly(e.target.checked)}
+              />
+              <span>Hot leads only</span>
+            </label>
+            <label className="dashboard-filter-check">
+              <input
+                type="checkbox"
+                checked={salesRestricted ? true : myLeadsOnly}
+                onChange={(e) => setMyLeadsOnly(e.target.checked)}
+                disabled={salesRestricted}
+              />
+              <span>My leads only</span>
+            </label>
+          </div>
+        ) : null}
+        {salesRestricted ? (
+          <span className="dashboard-filter-hint muted">
+            Salesperson view · {profileName || '—'}
+          </span>
+        ) : null}
       </div>
 
       {error ? <div className="banner banner-error">{error}</div> : null}
 
       {loading ? (
-        <p className="muted">Loading leads…</p>
+        <p className="muted dashboard-loading">Loading leads…</p>
       ) : leads.length === 0 ? (
         <div className="card empty-state dashboard-empty">
           <p>No leads yet.</p>
           <Link className="btn btn-primary btn-sm" to="/add-lead">
-            Add lead
+            + Add Lead
           </Link>
         </div>
       ) : filteredLeads.length === 0 ? (
@@ -514,20 +549,20 @@ export default function Dashboard() {
           </button>
         </div>
       ) : (
-        <div className="table-wrap card table-scroll dashboard-table-wrap">
-          <table className="data-table data-table-crm data-table-sticky">
+        <div className="table-wrap card table-scroll dashboard-table-wrap dashboard-table-wrap--crm">
+          <table className="data-table data-table-crm data-table-sticky data-table-crm--compact">
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Score</th>
                 <th>Category</th>
                 <th>Industry</th>
-                <th>Business type</th>
+                <th>Type</th>
                 <th>Source</th>
                 <th>Status</th>
-                <th>Assign to</th>
-                <th>Suggested next action</th>
-                <th>Follow-up</th>
+                <th>Assignee</th>
+                <th>Next action</th>
+                <th>Due</th>
                 <th></th>
               </tr>
             </thead>

@@ -221,3 +221,30 @@ export function LeadActivityHeatmap({ heatmap }) {
   )
 }
 
+const AGING_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444']
+
+/** Bar chart: lead aging buckets */
+export function LeadAgingBarChart({ data }) {
+  if (!data?.length || data.every((d) => d.count === 0)) {
+    return <p className="muted chart-empty">No open leads to analyze aging.</p>
+  }
+
+  return (
+    <div className="chart-block">
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+          <YAxis allowDecimals={false} width={36} tick={{ fontSize: 11 }} />
+          <Tooltip formatter={(value) => [value, 'Leads']} />
+          <Bar dataKey="count" name="count" radius={[4, 4, 0, 0]}>
+            {data.map((entry, index) => (
+              <Cell key={entry.bucket} fill={AGING_COLORS[index % AGING_COLORS.length]} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+

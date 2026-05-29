@@ -6,6 +6,12 @@ import { calculateLeadScore, SCORING_DEFAULT_BUDGETS } from '../utils/leadScorin
 import { useIndustries } from '../hooks/useIndustries.js'
 import { useBusinessTypes } from '../hooks/useBusinessTypes.js'
 import { useScoringConfig, fetchScoringConfigRow } from '../hooks/useScoringConfig.js'
+import { ACTIVITY_TYPES } from '../constants/activityTypes'
+import { recordActivity } from '../services/activityEngine'
+import { recordInitialScore } from '../services/rescoreLead'
+import { createHotLeadNotification } from '../services/notificationService'
+import { isHotCategory } from '../utils/leadHot'
+import { resolveLeadAssignee, recordAssignmentOutcome } from '../services/assignmentEngine'
 
 const initialForm = {
   name: '',
@@ -91,6 +97,20 @@ export default function AddLead() {
       mediumBudget,
     })
 
+    const industryName =
+      industries.find((i) => i.id === form.industry_id)?.name ?? ''
+
+    const { assignee, matchedRule, method } = await resolveLeadAssignee({
+      lead: {
+        source: form.source,
+        budget: budgetNum,
+        urgency: form.urgency,
+        industry_id: form.industry_id,
+      },
+      industryName,
+      organizationId: organization.id,
+    })
+
     const row = {
       name: form.name.trim(),
       phone: form.phone.trim(),
@@ -104,18 +124,48 @@ export default function AddLead() {
       score,
       category,
       status: 'new',
-      assigned_to: '',
+      assigned_to: assignee,
       organization_id: organization?.id,
       created_by: user?.id ?? null,
     }
 
-    const { error: insertError } = await supabase.from('leads').insert(row)
+    const { data: inserted, error: insertError } = await supabase
+      .from('leads')
+      .insert(row)
+      .select()
+      .single()
 
     setSubmitting(false)
 
     if (insertError) {
       setError(insertError.message)
       return
+    }
+
+    await recordActivity({
+      leadId: inserted.id,
+      organizationId: organization.id,
+      userId: user?.id ?? null,
+      activityType: ACTIVITY_TYPES.LEAD_CREATED,
+      description: `Lead created: ${inserted.name}`,
+      metadata: { source: inserted.source, score: inserted.score, category: inserted.category },
+    })
+
+    await recordInitialScore(inserted, user?.id ?? null)
+
+    if (assignee) {
+      await recordAssignmentOutcome({
+        lead: inserted,
+        assignee,
+        matchedRule,
+        organizationId: organization.id,
+        userId: user?.id ?? null,
+        method,
+      })
+    }
+
+    if (isHotCategory(inserted.category)) {
+      await createHotLeadNotification(inserted)
     }
 
     navigate('/dashboard')

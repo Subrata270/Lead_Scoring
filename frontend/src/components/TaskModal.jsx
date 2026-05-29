@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { TASK_TYPES } from '../constants/crm'
+import { ACTIVITY_TYPES } from '../constants/activityTypes'
 import { useAuth } from '../hooks/useAuth.js'
+import { recordActivity } from '../services/activityEngine'
 
 export default function TaskModal({ lead, onClose, onCreated }) {
   const { user, organization } = useAuth()
@@ -40,6 +42,16 @@ export default function TaskModal({ lead, onClose, onCreated }) {
       setError(insertError.message)
       return
     }
+
+    const orgId = lead.organization_id ?? organization?.id
+    await recordActivity({
+      leadId: lead.id,
+      organizationId: orgId,
+      userId: user?.id ?? null,
+      activityType: ACTIVITY_TYPES.TASK_CREATED,
+      description: `Task created (${taskType})`,
+      metadata: { task_id: data.id, task_type: taskType, due_date: dueIso },
+    })
 
     onCreated(data)
     onClose()

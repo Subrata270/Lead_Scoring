@@ -6,9 +6,16 @@ import {
   generateSalesMessage,
 } from '../utils/messageTemplates.js'
 
-export default function MessageModal({ lead, onClose }) {
+export default function MessageModal({ lead, onClose, onMessageGenerated }) {
   const [channel, setChannel] = useState(MESSAGE_CHANNEL.WHATSAPP)
   const [copied, setCopied] = useState(false)
+  const [logged, setLogged] = useState(false)
+
+  function notifyGenerated(ch) {
+    if (logged || !onMessageGenerated) return
+    setLogged(true)
+    onMessageGenerated(ch)
+  }
 
   const preview = useMemo(() => {
     try {
@@ -31,6 +38,7 @@ export default function MessageModal({ lead, onClose }) {
     try {
       await navigator.clipboard.writeText(preview)
       setCopied(true)
+      notifyGenerated(channel)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
       setCopied(false)

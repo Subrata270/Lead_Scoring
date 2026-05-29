@@ -1,47 +1,45 @@
 import { lazy, Suspense } from 'react'
-import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import AddLead from './components/AddLead.jsx'
 import Dashboard from './components/Dashboard.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import PublicLeadForm from './components/PublicLeadForm.jsx'
+import AppNav from './components/AppNav.jsx'
 import Login from './pages/Login.jsx'
 import Signup from './pages/Signup.jsx'
 import { useAuth } from './hooks/useAuth.js'
+import { useUnreadNotificationCount } from './hooks/useNotifications.js'
 import './App.css'
 
 const Analytics = lazy(() => import('./pages/Analytics.jsx'))
 const FollowUps = lazy(() => import('./pages/FollowUps.jsx'))
 const ScoringConfig = lazy(() => import('./pages/ScoringConfig.jsx'))
+const Team = lazy(() => import('./pages/Team.jsx'))
+const Notifications = lazy(() => import('./pages/Notifications.jsx'))
+const ImportLeads = lazy(() => import('./pages/ImportLeads.jsx'))
+const AssignmentRules = lazy(() => import('./pages/AssignmentRules.jsx'))
 
-function Layout() {
-  const { profile, organization, signOut } = useAuth()
-
-  const displayName = profile?.full_name?.trim() || 'Team member'
-  const orgName = organization?.name || 'Organization'
-  const roleLabel = profile?.role ? String(profile.role) : '—'
+function NotificationsPage() {
+  const { organization, user } = useAuth()
+  const { refresh: refreshUnread } = useUnreadNotificationCount(organization?.id, user?.id)
 
   return (
+    <Suspense
+      fallback={
+        <div className="page page-wide">
+          <p className="muted">Loading notifications…</p>
+        </div>
+      }
+    >
+      <Notifications onRead={refreshUnread} />
+    </Suspense>
+  )
+}
+
+function Layout() {
+  return (
     <div className="app-shell">
-      <nav className="app-nav">
-        <span className="app-brand">AI Lead Scoring</span>
-        <div className="app-nav-links">
-          <Link to="/dashboard">Dashboard</Link>
-          <Link to="/follow-ups">Follow-Ups</Link>
-          <Link to="/analytics">Analytics</Link>
-          <Link to="/config">Scoring Config</Link>
-          <Link to="/add-lead">Add lead</Link>
-        </div>
-        <div className="app-nav-user">
-          <div className="app-nav-org" title={orgName}>
-            <span className="app-nav-org-name">{orgName}</span>
-            <span className="muted app-nav-role">{roleLabel}</span>
-          </div>
-          <span className="app-nav-display-name">{displayName}</span>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => void signOut()}>
-            Log out
-          </button>
-        </div>
-      </nav>
+      <AppNav />
       <main className="app-main">
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -76,6 +74,48 @@ function Layout() {
           />
           <Route path="/add-lead" element={<AddLead />} />
           <Route
+            path="/import-leads"
+            element={
+              <Suspense
+                fallback={
+                  <div className="page page-wide">
+                    <p className="muted">Loading import…</p>
+                  </div>
+                }
+              >
+                <ImportLeads />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/assignment-rules"
+            element={
+              <Suspense
+                fallback={
+                  <div className="page page-wide">
+                    <p className="muted">Loading assignment rules…</p>
+                  </div>
+                }
+              >
+                <AssignmentRules />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/team"
+            element={
+              <Suspense
+                fallback={
+                  <div className="page page-wide">
+                    <p className="muted">Loading team…</p>
+                  </div>
+                }
+              >
+                <Team />
+              </Suspense>
+            }
+          />
+          <Route
             path="/config"
             element={
               <Suspense
@@ -89,6 +129,7 @@ function Layout() {
               </Suspense>
             }
           />
+          <Route path="/notifications" element={<NotificationsPage />} />
         </Routes>
       </main>
     </div>

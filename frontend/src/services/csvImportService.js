@@ -11,7 +11,7 @@ import {
 } from './notificationService'
 import { isHotCategory } from '../utils/leadHot'
 
-const ALLOWED_SOURCES = new Set(['website', 'referral', 'ads', 'event', 'other', 'csv', 'api', 'public_form'])
+const ALLOWED_SOURCES = new Set(['website', 'referral', 'ads', 'event', 'other', 'csv', 'api', 'public_form', 'hubspot'])
 const ALLOWED_URGENCY = new Set(['low', 'medium', 'high'])
 
 export function validateMappedRow(row, catalog) {

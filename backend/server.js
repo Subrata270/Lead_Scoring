@@ -37,6 +37,19 @@ async function loadInviteOnboarding() {
   return import(modUrl);
 }
 
+async function loadHubSpotSync() {
+  const modUrl = pathToFileURL(
+    path.join(__dirname, "../frontend/src/lib/hubspotSync.js"),
+  ).href;
+  return import(modUrl);
+}
+
+function sendHubSpotCors(res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
 app.get("/", (req, res) => {
   res.send("API is running… POST /api/public-lead to create a lead.");
 });
@@ -136,6 +149,50 @@ app.post("/api/invitations/accept", async (req, res) => {
     res.status(200).json(result.data);
   } catch (e) {
     res.status(500).json({ error: e?.message ?? "Internal server error" });
+  }
+});
+
+app.options("/api/integrations/hubspot/contacts", (req, res) => {
+  sendHubSpotCors(res);
+  res.status(204).end();
+});
+
+app.get("/api/integrations/hubspot/contacts", async (req, res) => {
+  sendHubSpotCors(res);
+
+  const hubspotToken = process.env.HUBSPOT_ACCESS_TOKEN || "";
+  if (!hubspotToken) {
+    res.status(503).json({
+      error: "HubSpot integration is not configured (set HUBSPOT_ACCESS_TOKEN).",
+    });
+    return;
+  }
+
+  const admin = await getAdminClient();
+  if (!admin) {
+    res.status(503).json({
+      error: "Server is not configured (set SUPABASE_SERVICE_ROLE_KEY and Supabase URL in frontend/.env).",
+    });
+    return;
+  }
+
+  try {
+    const { authenticateHubSpotImport, syncHubSpotContacts } = await loadHubSpotSync();
+    const auth = await authenticateHubSpotImport(admin, req.headers.authorization);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: auth.error });
+      return;
+    }
+
+    const result = await syncHubSpotContacts(admin, {
+      hubspotAccessToken: hubspotToken,
+      organizationId: auth.organizationId,
+      userId: auth.userId,
+    });
+
+    res.status(200).json(result);
+  } catch (e) {
+    res.status(500).json({ error: e?.message ?? "HubSpot import failed" });
   }
 });
 

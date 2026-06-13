@@ -10,7 +10,7 @@ import { resolveLeadAssignee, recordAssignmentOutcome } from '../services/assign
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-const ALLOWED_SOURCES = new Set(['website', 'referral', 'ads', 'event', 'other', 'api', 'public_form'])
+const ALLOWED_SOURCES = new Set(['website', 'referral', 'ads', 'event', 'other', 'api', 'public_form', 'hubspot'])
 
 function isUuid(v) {
   return typeof v === 'string' && UUID_RE.test(v.trim())

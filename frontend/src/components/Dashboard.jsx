@@ -18,6 +18,7 @@ import { playHotLeadChime } from '../utils/hotLeadSound.js'
 import { computeGlobalResponseStats } from '../utils/analyticsAggregates.js'
 import { formatDurationMs } from '../utils/responseTimeFormat.js'
 import { exportLeadsCsv } from '../utils/csvExport.js'
+import { importFromHubSpot } from '../services/hubspotImportService.js'
 import LeadRow from './LeadRow.jsx'
 import TaskModal from './TaskModal.jsx'
 import HotLeadToast from './HotLeadToast.jsx'
@@ -43,7 +44,7 @@ function endOfDay(isoDate) {
 }
 
 export default function Dashboard() {
-  const { organization, profile } = useAuth()
+  const { organization, profile, session } = useAuth()
   const orgId = organization?.id
   const profileName = profile?.full_name?.trim() || ''
   const salesRestricted = isSalesperson(profile?.role)
@@ -70,6 +71,8 @@ export default function Dashboard() {
   const [dateTo, setDateTo] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [hubspotImporting, setHubspotImporting] = useState(false)
+  const [hubspotMessage, setHubspotMessage] = useState(null)
 
   const [, bumpHotNow] = useReducer((x) => x + 1, 0)
   useEffect(() => {
@@ -374,6 +377,34 @@ export default function Dashboard() {
     exportLeadsCsv(filteredLeads, 'leads-filtered.csv')
   }
 
+  async function handleHubSpotImport() {
+    setHubspotMessage(null)
+    const token = session?.access_token
+    if (!token) {
+      setHubspotMessage({ type: 'error', text: 'Sign in again to import from HubSpot.' })
+      return
+    }
+
+    setHubspotImporting(true)
+    try {
+      const result = await importFromHubSpot(token)
+      if (!result.ok) {
+        setHubspotMessage({ type: 'error', text: result.error || 'HubSpot import failed.' })
+        return
+      }
+
+      setHubspotMessage({
+        type: 'success',
+        text: `Imported ${result.imported} lead${result.imported === 1 ? '' : 's'} (${result.skipped} skipped, ${result.total} total from HubSpot).`,
+      })
+      await loadData()
+    } catch (err) {
+      setHubspotMessage({ type: 'error', text: err?.message || 'HubSpot import failed.' })
+    } finally {
+      setHubspotImporting(false)
+    }
+  }
+
   return (
     <div className="page page-wide page-dashboard dashboard-root dashboard-layout dashboard-layout--crm">
       <header className="dashboard-crm-header">
@@ -382,6 +413,14 @@ export default function Dashboard() {
           <p className="dashboard-crm-subtitle">Monitor leads, assignments and conversions</p>
         </div>
         <div className="dashboard-crm-header-actions">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleHubSpotImport}
+            disabled={hubspotImporting || loading}
+          >
+            {hubspotImporting ? 'Importing…' : 'Import from HubSpot'}
+          </button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={handleExportCsv}>
             Export
           </button>
@@ -531,6 +570,13 @@ export default function Dashboard() {
       </div>
 
       {error ? <div className="banner banner-error">{error}</div> : null}
+      {hubspotMessage ? (
+        <div
+          className={`banner ${hubspotMessage.type === 'error' ? 'banner-error' : 'banner-success'}`}
+        >
+          {hubspotMessage.text}
+        </div>
+      ) : null}
 
       {loading ? (
         <p className="muted dashboard-loading">Loading leads…</p>

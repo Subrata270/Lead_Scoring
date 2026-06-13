@@ -35,12 +35,6 @@ export default async function handler(req, res) {
 
   const supabaseUrl = getSupabaseUrl()
   const serviceKey = getServiceKey()
-  if (!supabaseUrl || !serviceKey) {
-    res.status(503).json({
-      error: 'Server is not configured for invitation onboarding.',
-    })
-    return
-  }
 
   const authHeader = req.headers.authorization || ''
   const token = authHeader.replace(/^Bearer\s+/i, '').trim()
@@ -61,11 +55,23 @@ export default async function handler(req, res) {
 
   const inviteId = String(body?.inviteId || '').trim()
   const fullName = String(body?.fullName || '').trim()
+  console.log('Invite ID:', inviteId)
+
   if (!inviteId || !fullName) {
     res.status(400).json({ error: 'inviteId and fullName are required.' })
     return
   }
 
+  if (!supabaseUrl || !serviceKey) {
+    console.error('[invite accept API] missing Supabase config', {
+      hasUrl: Boolean(supabaseUrl),
+      hasServiceKey: Boolean(serviceKey),
+    })
+    res.status(503).json({
+      error: 'Server is not configured for invitation onboarding.',
+    })
+    return
+  }
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
@@ -73,6 +79,7 @@ export default async function handler(req, res) {
   const { data: userData, error: userErr } = await admin.auth.getUser(token)
   if (userErr || !userData?.user?.id) {
     console.error('[invite] auth token invalid', userErr)
+    console.log('Invite Error:', userErr?.message || 'Invalid session')
     res.status(401).json({ error: 'Invalid or expired session.' })
     return
   }
@@ -86,9 +93,11 @@ export default async function handler(req, res) {
   })
 
   if (!result.ok) {
+    console.log('Invite Error:', result.error)
     res.status(result.status).json({ error: result.error })
     return
   }
 
+  console.log('[invite accept API] success', { inviteId, userId: user.id })
   res.status(200).json(result.data)
 }

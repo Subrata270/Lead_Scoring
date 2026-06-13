@@ -232,9 +232,10 @@ export function AuthProvider({ children }) {
       )
 
       if (!result.ok) {
-        setProfileError(
-          result.error || 'Invitation was accepted but profile could not be created. Contact your administrator.',
-        )
+        const errMsg =
+          result.error || 'Invitation was accepted but profile could not be created. Contact your administrator.'
+        console.error('[AuthContext] invite completion failed', { inviteId, error: errMsg })
+        setProfileError(errMsg)
         inviteCompletionRef.current.delete(dedupeKey)
         return false
       }

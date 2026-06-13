@@ -35,23 +35,31 @@ export default async function handler(req, res) {
 
   const url = getSupabaseUrl()
   const serviceKey = getServiceKey()
+  const inviteId = String(req.query?.inviteId || '').trim()
+  console.log('Invite ID:', inviteId)
+
   if (!url || !serviceKey) {
+    console.error('[invite API] missing Supabase config', {
+      hasUrl: Boolean(url),
+      hasServiceKey: Boolean(serviceKey),
+    })
     res.status(503).json({
       error: 'Server is not configured for invitation onboarding.',
     })
     return
   }
 
-  const inviteId = String(req.query?.inviteId || '').trim()
   const admin = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
   const result = await fetchInvitationById(admin, inviteId)
   if (!result.ok) {
+    console.log('Invite Error:', result.error)
     res.status(result.status).json({ error: result.error })
     return
   }
 
+  console.log('Invite Query Result:', result.data)
   res.status(200).json({ invitation: result.data })
 }

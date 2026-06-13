@@ -1,8 +1,46 @@
 export const INVITE_INVALID_MSG = 'Invalid or expired invitation.'
 export const INVITE_USED_MSG = 'This invitation has already been used.'
+export const INVITE_CANCELLED_MSG = 'This invitation has been cancelled.'
 
 export function normalizeInviteStatus(status) {
   return String(status || '').toLowerCase().trim()
+}
+
+/**
+ * Validate a raw invitation row (client or server).
+ * @param {object | null | undefined} invite
+ * @returns {{ ok: true, invitation: object } | { ok: false, error: string, statusCode?: number }}
+ */
+export function validateInvitationRecord(invite) {
+  if (!invite || typeof invite !== 'object' || !invite.id) {
+    return { ok: false, error: INVITE_INVALID_MSG, statusCode: 404 }
+  }
+
+  const status = normalizeInviteStatus(invite.status)
+  if (status === 'accepted') {
+    return { ok: false, error: INVITE_USED_MSG, statusCode: 409 }
+  }
+  if (status === 'cancelled') {
+    return { ok: false, error: INVITE_CANCELLED_MSG, statusCode: 410 }
+  }
+  if (status !== 'pending') {
+    return { ok: false, error: INVITE_INVALID_MSG, statusCode: 410 }
+  }
+
+  if (!invite.email || !invite.organization_id) {
+    return { ok: false, error: 'Invitation is incomplete or invalid.', statusCode: 422 }
+  }
+
+  return {
+    ok: true,
+    invitation: {
+      id: invite.id,
+      email: String(invite.email).trim().toLowerCase(),
+      role: String(invite.role || 'salesperson').trim() || 'salesperson',
+      organization_id: invite.organization_id,
+      status: invite.status,
+    },
+  }
 }
 
 /**
@@ -11,43 +49,43 @@ export function normalizeInviteStatus(status) {
  */
 export async function fetchInvitationById(admin, inviteId) {
   const id = String(inviteId || '').trim()
+  console.log('Invite ID:', id)
+
   if (!id) {
     console.warn('[invite] fetch skipped: missing invite id')
     return { ok: false, status: 400, error: INVITE_INVALID_MSG }
   }
 
-  console.log('[invite] fetching invitation', { inviteId: id })
-  const { data, error } = await admin
+  const { data: invite, error } = await admin
     .from('invitations')
     .select('id,email,role,organization_id,status')
     .eq('id', id)
     .maybeSingle()
 
+  console.log('Invite Query Result:', invite)
+  console.log('Invite Error:', error)
+
   if (error) {
-    console.error('[invite] fetch failed', { inviteId: id, error })
+    console.error('[invite] fetch failed', { inviteId: id, error: error.message })
     return { ok: false, status: 500, error: error.message }
   }
-  if (!data) {
-    console.warn('[invite] invitation not found', { inviteId: id })
-    return { ok: false, status: 404, error: INVITE_INVALID_MSG }
-  }
 
-  const status = normalizeInviteStatus(data.status)
-  if (status === 'accepted') {
-    console.warn('[invite] invitation already accepted', { inviteId: id })
-    return { ok: false, status: 409, error: INVITE_USED_MSG }
-  }
-  if (status !== 'pending') {
-    console.warn('[invite] invitation not pending', { inviteId: id, status: data.status })
-    return { ok: false, status: 410, error: INVITE_INVALID_MSG }
+  const validated = validateInvitationRecord(invite)
+  if (!validated.ok) {
+    console.warn('[invite] invitation invalid', {
+      inviteId: id,
+      status: invite?.status ?? null,
+      error: validated.error,
+    })
+    return { ok: false, status: validated.statusCode || 404, error: validated.error }
   }
 
   console.log('[invite] invitation valid', {
     inviteId: id,
-    organization_id: data.organization_id,
-    role: data.role,
+    organization_id: validated.invitation.organization_id,
+    role: validated.invitation.role,
   })
-  return { ok: true, data }
+  return { ok: true, data: validated.invitation }
 }
 
 /**

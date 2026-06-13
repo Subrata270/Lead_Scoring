@@ -28,6 +28,9 @@ export default function Signup() {
   const [email, setEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('')
   const [inviteOrganizationId, setInviteOrganizationId] = useState('')
+  const [inviteStatus, setInviteStatus] = useState('')
+  const [inviteFound, setInviteFound] = useState(false)
+  const [inviteLookupSource, setInviteLookupSource] = useState('')
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState(null)
   const [password, setPassword] = useState('')
@@ -58,25 +61,53 @@ export default function Signup() {
         setInviteError(null)
         setInviteRole('')
         setInviteOrganizationId('')
+        setInviteStatus('')
+        setInviteFound(false)
+        setInviteLookupSource('')
         return
       }
 
       setInviteLoading(true)
       setInviteError(null)
+      setInviteFound(false)
+      setInviteStatus('')
+      setInviteLookupSource('')
+      console.log('Invite ID:', inviteId)
 
       const result = await fetchInvitation(inviteId)
       if (cancelled) return
 
       setInviteLoading(false)
+      setInviteLookupSource(result.source || '')
+
       if (!result.ok) {
-        setInviteError(result.error)
+        console.log('Invite Query Result:', null)
+        console.log('Invite Error:', result.error)
+        setInviteError(result.error || 'Invalid or expired invitation.')
+        setInviteFound(false)
+        setEmail('')
+        setInviteRole('')
+        setInviteOrganizationId('')
         return
       }
 
       const invitation = result.invitation
-      setEmail(String(invitation.email || '').trim())
+      if (!invitation?.id || !invitation?.email) {
+        const msg = 'Invitation data is missing or incomplete.'
+        console.log('Invite Query Result:', invitation)
+        console.log('Invite Error:', msg)
+        setInviteError(msg)
+        setInviteFound(false)
+        return
+      }
+
+      console.log('Invite Query Result:', invitation)
+      console.log('Invite Error:', null)
+      setInviteFound(true)
+      setEmail(String(invitation.email).trim())
       setInviteRole(String(invitation.role || 'salesperson').trim() || 'salesperson')
       setInviteOrganizationId(String(invitation.organization_id || '').trim())
+      setInviteStatus(String(invitation.status || 'pending').trim())
     }
 
     void loadInvite()
@@ -153,8 +184,8 @@ export default function Signup() {
       setError('Enter your company name.')
       return
     }
-    if (inviteMode && inviteError) {
-      setError(inviteError)
+    if (inviteMode && (inviteError || !inviteFound)) {
+      setError(inviteError || 'Invalid or expired invitation.')
       return
     }
     if (inviteMode && (!inviteOrganizationId || !inviteRole || !email.trim())) {
@@ -262,6 +293,30 @@ export default function Signup() {
             : 'Sign up to create an organization and admin account.'}
         </p>
 
+        {inviteMode ? (
+          <div
+            className="card"
+            style={{ marginBottom: '1rem', fontSize: '0.85rem', background: 'var(--surface-2, #f4f4f5)' }}
+            aria-label="Invite debug panel"
+          >
+            <strong>Invite debug</strong>
+            <dl style={{ margin: '0.5rem 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.25rem 0.75rem' }}>
+              <dt>Invite ID</dt>
+              <dd style={{ margin: 0 }}>{inviteId || '—'}</dd>
+              <dt>Invite Found</dt>
+              <dd style={{ margin: 0 }}>{inviteFound ? 'true' : 'false'}</dd>
+              <dt>Invite Email</dt>
+              <dd style={{ margin: 0 }}>{email || '—'}</dd>
+              <dt>Invite Status</dt>
+              <dd style={{ margin: 0 }}>{inviteStatus || (inviteLoading ? 'loading…' : '—')}</dd>
+              <dt>Organization ID</dt>
+              <dd style={{ margin: 0 }}>{inviteOrganizationId || '—'}</dd>
+              <dt>Lookup Source</dt>
+              <dd style={{ margin: 0 }}>{inviteLookupSource || (inviteLoading ? 'loading…' : '—')}</dd>
+            </dl>
+          </div>
+        ) : null}
+
         {inviteLoading ? <p className="muted">Validating invitation…</p> : null}
         {inviteError ? (
           <div className="banner banner-error" role="alert">
@@ -335,7 +390,7 @@ export default function Signup() {
           <button
             type="submit"
             className="btn btn-primary auth-submit"
-            disabled={submitting || inviteLoading || Boolean(inviteMode && inviteError)}
+            disabled={submitting || inviteLoading || Boolean(inviteMode && (inviteError || !inviteFound))}
           >
             {submitting ? 'Creating account…' : inviteMode ? 'Accept invite & sign up' : 'Sign up'}
           </button>

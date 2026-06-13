@@ -11,6 +11,32 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "48kb" }));
 
+function getSupabaseConfig() {
+  const url =
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  return { url, serviceKey };
+}
+
+async function getAdminClient() {
+  const { url, serviceKey } = getSupabaseConfig();
+  if (!url || !serviceKey) return null;
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function loadInviteOnboarding() {
+  const modUrl = pathToFileURL(
+    path.join(__dirname, "../frontend/src/lib/inviteOnboarding.js"),
+  ).href;
+  return import(modUrl);
+}
+
 app.get("/", (req, res) => {
   res.send("API is running… POST /api/public-lead to create a lead.");
 });
@@ -24,6 +50,93 @@ function sendPublicLeadCors(res) {
 app.options("/api/public-lead", (req, res) => {
   sendPublicLeadCors(res);
   res.status(204).end();
+});
+
+app.get("/api/invitations/:inviteId", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  const admin = await getAdminClient();
+  if (!admin) {
+    res.status(503).json({
+      error: "Server is not configured for invitation onboarding.",
+    });
+    return;
+  }
+
+  try {
+    const { fetchInvitationById } = await loadInviteOnboarding();
+    const inviteId = String(req.params.inviteId || "").trim();
+    const result = await fetchInvitationById(admin, inviteId);
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.status(200).json({ invitation: result.data });
+  } catch (e) {
+    res.status(500).json({ error: e?.message ?? "Internal server error" });
+  }
+});
+
+app.options("/api/invitations/accept", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.status(204).end();
+});
+
+app.post("/api/invitations/accept", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  const admin = await getAdminClient();
+  if (!admin) {
+    res.status(503).json({
+      error: "Server is not configured for invitation onboarding.",
+    });
+    return;
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    res.status(401).json({ error: "Missing authorization token." });
+    return;
+  }
+
+  const inviteId = String(req.body?.inviteId || "").trim();
+  const fullName = String(req.body?.fullName || "").trim();
+  if (!inviteId || !fullName) {
+    res.status(400).json({ error: "inviteId and fullName are required." });
+    return;
+  }
+
+  try {
+    const { acceptInvitationForUser } = await loadInviteOnboarding();
+    const { data: userData, error: userErr } = await admin.auth.getUser(token);
+    if (userErr || !userData?.user?.id) {
+      console.error("[invite] auth token invalid", userErr);
+      res.status(401).json({ error: "Invalid or expired session." });
+      return;
+    }
+
+    const user = userData.user;
+    const result = await acceptInvitationForUser(admin, {
+      inviteId,
+      userId: user.id,
+      userEmail: user.email || "",
+      fullName,
+    });
+
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    res.status(200).json(result.data);
+  } catch (e) {
+    res.status(500).json({ error: e?.message ?? "Internal server error" });
+  }
 });
 
 app.post("/api/public-lead", async (req, res) => {

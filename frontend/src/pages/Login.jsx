@@ -1,10 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../hooks/useAuth.js'
+import { AUTH_LOAD_TIMEOUT_MS } from '../utils/authLoadTimeout.js'
 
 export default function Login() {
-  const { user, profile, organization, loading, profileLoading } = useAuth()
+  const {
+    user,
+    profile,
+    organization,
+    loading,
+    profileLoading,
+    profileError,
+    loadTimedOut,
+    bootstrapComplete,
+    refreshProfile,
+  } = useAuth()
   const location = useLocation()
   const from = location.state?.from || '/dashboard'
 
@@ -13,16 +24,50 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
+  const [localTimedOut, setLocalTimedOut] = useState(false)
 
-  if (!loading && !profileLoading && user && profile?.organization_id && organization?.id) {
+  const hasWorkspace =
+    Boolean(profile?.organization_id) && Boolean(organization?.id || profile?.organization_id)
+  const isBootLoading = !bootstrapComplete || ((loading || profileLoading) && !loadTimedOut && !localTimedOut)
+
+  useEffect(() => {
+    if (bootstrapComplete && !loading && !profileLoading) {
+      setLocalTimedOut(false)
+      return undefined
+    }
+    if (!isBootLoading) return undefined
+    const timer = window.setTimeout(() => setLocalTimedOut(true), AUTH_LOAD_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [bootstrapComplete, isBootLoading, loading, profileLoading])
+
+  if (bootstrapComplete && !loading && !profileLoading && user && hasWorkspace) {
     return <Navigate to={from === '/login' ? '/dashboard' : from} replace />
   }
 
-  if (!loading && user && profileLoading) {
+  if (isBootLoading) {
     return (
       <div className="auth-boot-screen" role="status">
         <div className="auth-spinner" />
         <p className="muted">Loading profile…</p>
+      </div>
+    )
+  }
+
+  if (user && (loadTimedOut || localTimedOut || profileError) && !hasWorkspace) {
+    return (
+      <div className="page auth-page">
+        <div className="auth-card card">
+          <h1 className="auth-card-title">Could not load workspace</h1>
+          {(loadTimedOut || localTimedOut) && (
+            <div className="banner banner-error">
+              Profile loading timed out after {AUTH_LOAD_TIMEOUT_MS / 1000} seconds.
+            </div>
+          )}
+          {profileError ? <div className="banner banner-error">{profileError}</div> : null}
+          <button type="button" className="btn btn-primary" onClick={() => void refreshProfile()}>
+            Retry
+          </button>
+        </div>
       </div>
     )
   }

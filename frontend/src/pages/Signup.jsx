@@ -2,10 +2,23 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../hooks/useAuth.js'
-import { normalizeRole } from '../utils/access.js'
+import {
+  acceptInvitation,
+  fetchInvitation,
+} from '../services/inviteOnboardingService.js'
+import { AUTH_LOAD_TIMEOUT_MS } from '../utils/authLoadTimeout.js'
 
 export default function Signup() {
-  const { user, profile, organization, loading, profileLoading } = useAuth()
+  const {
+    user,
+    profile,
+    organization,
+    loading,
+    profileLoading,
+    profileError,
+    loadTimedOut,
+    bootstrapComplete,
+  } = useAuth()
   const [searchParams] = useSearchParams()
   const inviteId = (searchParams.get('invite') || '').trim()
   const inviteMode = Boolean(inviteId)
@@ -21,6 +34,21 @@ export default function Signup() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [pendingVerify, setPendingVerify] = useState(false)
+  const [localTimedOut, setLocalTimedOut] = useState(false)
+
+  const hasWorkspace =
+    Boolean(profile?.organization_id) && Boolean(organization?.id || profile?.organization_id)
+  const isBootLoading = !bootstrapComplete || ((loading || profileLoading) && !loadTimedOut && !localTimedOut)
+
+  useEffect(() => {
+    if (bootstrapComplete && !loading && !profileLoading) {
+      setLocalTimedOut(false)
+      return undefined
+    }
+    if (!isBootLoading) return undefined
+    const timer = window.setTimeout(() => setLocalTimedOut(true), AUTH_LOAD_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [bootstrapComplete, isBootLoading, loading, profileLoading])
 
   useEffect(() => {
     let cancelled = false
@@ -32,30 +60,23 @@ export default function Signup() {
         setInviteOrganizationId('')
         return
       }
+
       setInviteLoading(true)
       setInviteError(null)
-      const { data, error: invErr } = await supabase
-        .from('invitations')
-        .select('id,email,role,organization_id,status')
-        .eq('id', inviteId)
-        .maybeSingle()
+
+      const result = await fetchInvitation(inviteId)
       if (cancelled) return
+
       setInviteLoading(false)
-      if (invErr) {
-        setInviteError(invErr.message)
+      if (!result.ok) {
+        setInviteError(result.error)
         return
       }
-      if (!data) {
-        setInviteError('Invalid invite link.')
-        return
-      }
-      if (normalizeRole(data.status) !== 'pending') {
-        setInviteError('This invitation has already been used or is no longer active.')
-        return
-      }
-      setEmail(String(data.email || '').trim())
-      setInviteRole(String(data.role || 'salesperson').trim() || 'salesperson')
-      setInviteOrganizationId(String(data.organization_id || '').trim())
+
+      const invitation = result.invitation
+      setEmail(String(invitation.email || '').trim())
+      setInviteRole(String(invitation.role || 'salesperson').trim() || 'salesperson')
+      setInviteOrganizationId(String(invitation.organization_id || '').trim())
     }
 
     void loadInvite()
@@ -64,17 +85,57 @@ export default function Signup() {
     }
   }, [inviteId, inviteMode])
 
-  if (!loading && !profileLoading && user && profile?.organization_id && organization?.id) {
+  if (bootstrapComplete && !loading && !profileLoading && user && hasWorkspace) {
     return <Navigate to="/dashboard" replace />
   }
 
-  if (!loading && user && profileLoading) {
+  if (isBootLoading) {
     return (
       <div className="auth-boot-screen" role="status">
         <div className="auth-spinner" />
         <p className="muted">Loading profile…</p>
       </div>
     )
+  }
+
+  if (user && (loadTimedOut || localTimedOut || profileError) && !hasWorkspace) {
+    return (
+      <div className="page auth-page">
+        <div className="auth-card card">
+          <h1 className="auth-card-title">Could not finish setup</h1>
+          {(loadTimedOut || localTimedOut) && (
+            <div className="banner banner-error">
+              Workspace loading timed out after {AUTH_LOAD_TIMEOUT_MS / 1000} seconds.
+            </div>
+          )}
+          {profileError ? <div className="banner banner-error">{profileError}</div> : null}
+          <Link className="btn btn-primary" to="/login">
+            Go to sign in
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  async function completeInviteOnboarding(sessionUser, name, accessToken) {
+    if (!accessToken) {
+      console.warn('[signup] invite completion deferred: no session token yet', { inviteId })
+      return { ok: false, deferred: true }
+    }
+
+    const acceptResult = await acceptInvitation({
+      inviteId,
+      fullName: name,
+      accessToken,
+    })
+
+    if (!acceptResult.ok) {
+      console.error('[signup] invite acceptance failed', { inviteId, error: acceptResult.error })
+      return { ok: false, error: acceptResult.error }
+    }
+
+    console.log('[signup] invite onboarding complete', { inviteId, userId: sessionUser.id })
+    return { ok: true }
   }
 
   async function handleSubmit(e) {
@@ -120,6 +181,7 @@ export default function Signup() {
 
     if (signUpErr) {
       setSubmitting(false)
+      console.error('[signup] auth signUp failed', signUpErr)
       setError(signUpErr.message)
       return
     }
@@ -132,51 +194,52 @@ export default function Signup() {
       return
     }
 
-    let profileInsertError
-
     if (inviteMode) {
-      const { error: profErr } = await supabase.from('profiles').insert({
-        id: sessionUser.id,
-        full_name: fn,
-        organization_id: inviteOrganizationId,
-        role: inviteRole,
-      })
-      profileInsertError = profErr
+      const inviteResult = await completeInviteOnboarding(
+        sessionUser,
+        fn,
+        authData.session?.access_token,
+      )
+      setSubmitting(false)
 
-      if (!profErr) {
-        const { error: invUpErr } = await supabase
-          .from('invitations')
-          .update({ status: 'accepted' })
-          .eq('id', inviteId)
-          .eq('status', 'pending')
-        if (invUpErr) profileInsertError = invUpErr
+      if (inviteResult.deferred) {
+        setPendingVerify(true)
+        return
       }
-    } else {
-      const { data: orgRow, error: orgErr } = await supabase
-        .from('organizations')
-        .insert({ name: cn })
-        .select('id')
-        .single()
-
-      if (orgErr) {
-        setSubmitting(false)
-        setError(orgErr.message)
+      if (!inviteResult.ok) {
+        setError(inviteResult.error || 'Failed to join organization.')
         return
       }
 
-      const { error: profErr } = await supabase.from('profiles').insert({
-        id: sessionUser.id,
-        full_name: fn,
-        organization_id: orgRow.id,
-        role: 'admin',
-      })
-      profileInsertError = profErr
+      window.location.assign('/dashboard')
+      return
     }
+
+    const { data: orgRow, error: orgErr } = await supabase
+      .from('organizations')
+      .insert({ name: cn })
+      .select('id')
+      .single()
+
+    if (orgErr) {
+      setSubmitting(false)
+      console.error('[signup] organization creation failed', orgErr)
+      setError(orgErr.message)
+      return
+    }
+
+    const { error: profErr } = await supabase.from('profiles').insert({
+      id: sessionUser.id,
+      full_name: fn,
+      organization_id: orgRow.id,
+      role: 'admin',
+    })
 
     setSubmitting(false)
 
-    if (profileInsertError) {
-      setError(profileInsertError.message)
+    if (profErr) {
+      console.error('[signup] profile creation failed', profErr)
+      setError(profErr.message)
       return
     }
 
@@ -208,7 +271,7 @@ export default function Signup() {
 
         {pendingVerify ? (
           <div className="banner banner-success" role="status">
-            Check your email to confirm your account. After confirming, sign in to continue.
+            Check your email to confirm your account. After confirming, sign in to join your team.
           </div>
         ) : null}
 

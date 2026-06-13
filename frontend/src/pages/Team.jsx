@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../hooks/useAuth.js'
 import { normalizeRole } from '../utils/access.js'
+import { buildInviteSignupUrl } from '../utils/appUrl.js'
 
 const ROLE_OPTIONS = ['admin', 'manager', 'salesperson']
 
@@ -92,6 +93,34 @@ export default function Team() {
     })
   }, [load])
 
+  useEffect(() => {
+    if (!orgId || !isAdmin) return undefined
+
+    const channel = supabase
+      .channel(`team-org-${orgId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', filter: `organization_id=eq.${orgId}` },
+        () => {
+          console.log('[team] profiles changed, refreshing members')
+          void load()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'invitations', filter: `organization_id=eq.${orgId}` },
+        () => {
+          console.log('[team] invitations changed, refreshing list')
+          void load()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [orgId, isAdmin, load])
+
   const pendingInvites = useMemo(
     () => invitations.filter((x) => normalizeRole(x.status) === 'pending'),
     [invitations],
@@ -101,15 +130,26 @@ export default function Team() {
     [invitations],
   )
 
+  async function copyText(text) {
+    if (!text) return false
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function copyInviteLink() {
     if (!inviteLink) return
-    try {
-      await navigator.clipboard.writeText(inviteLink)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      setCopied(false)
-    }
+    const ok = await copyText(inviteLink)
+    setCopied(ok)
+    if (ok) window.setTimeout(() => setCopied(false), 2000)
+  }
+
+  async function copyPendingInviteLink(inviteId) {
+    const link = buildInviteSignupUrl(inviteId)
+    await copyText(link)
   }
 
   async function cancelInvite(id) {
@@ -165,8 +205,7 @@ export default function Team() {
 
     setInvitations((prev) => [data, ...prev])
     setInviteEmail('')
-    const next = `${window.location.origin}/signup?invite=${encodeURIComponent(data.id)}`
-    setInviteLink(next)
+    setInviteLink(buildInviteSignupUrl(data.id))
   }
 
   if (!isAdmin) {
@@ -291,7 +330,14 @@ export default function Team() {
                         <td>{inv.role}</td>
                         <td>{inv.status}</td>
                         <td>{fmtDate(inv.created_at)}</td>
-                        <td>
+                        <td className="lead-actions-cell">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => void copyPendingInviteLink(inv.id)}
+                          >
+                            Copy link
+                          </button>
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"

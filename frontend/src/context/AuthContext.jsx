@@ -6,7 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
-} from 'react'
+} 
+from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { acceptInvitation } from '../services/inviteOnboardingService.js'
 import { AUTH_LOAD_TIMEOUT_MS, withAuthLoadTimeout } from '../utils/authLoadTimeout.js'

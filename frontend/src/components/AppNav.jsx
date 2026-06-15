@@ -3,6 +3,7 @@ import { Link, NavLink } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth.js'
 import { normalizeRole } from '../utils/access.js'
 import { useUnreadNotificationCount } from '../hooks/useNotifications.js'
+import ThemeToggle from './ThemeToggle.jsx'
 
 function NavBellIcon() {
   return (
@@ -82,7 +83,6 @@ export default function AppNav() {
 
   const centerLinks = [
     { to: '/dashboard', label: 'Dashboard', end: true },
-    { to: '/dashboard', label: 'Leads', end: false },
     { to: '/analytics', label: 'Analytics' },
     ...(isAdmin ? [{ to: '/team', label: 'Team' }] : []),
   ]
@@ -93,6 +93,7 @@ export default function AppNav() {
     { to: '/import-leads', label: 'Import Leads' },
     { to: '/follow-ups', label: 'Follow-Ups' },
     { to: '/add-lead', label: 'Add Lead' },
+    { to: '/qa', label: 'QA Checklist' },
   ]
 
   return (
@@ -120,6 +121,7 @@ export default function AppNav() {
       </div>
 
       <div className="app-nav-right">
+        <ThemeToggle />
         <Link
           to="/notifications"
           className="app-nav-icon-btn"

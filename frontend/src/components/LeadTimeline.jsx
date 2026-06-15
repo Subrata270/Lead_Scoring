@@ -10,7 +10,7 @@ function formatAt(iso) {
   })
 }
 
-export default function LeadTimeline({ leadId, organizationId }) {
+export default function LeadTimeline({ leadId, organizationId, refreshKey = 0 }) {
   const [activities, setActivities] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -40,7 +40,7 @@ export default function LeadTimeline({ leadId, organizationId }) {
     return () => {
       cancelled = true
     }
-  }, [leadId, organizationId])
+  }, [leadId, organizationId, refreshKey])
 
   if (loading) {
     return <p className="muted subtle">Loading timeline…</p>

@@ -2,6 +2,23 @@ import { supabase } from '../lib/supabaseClient'
 import { NOTIFICATION_TYPES } from '../constants/notificationTypes'
 import { isHotCategory } from '../utils/leadHot'
 
+async function hasExistingNotification(db, { organizationId, notificationType, leadId, metadataKey, metadataValue }) {
+  let q = db
+    .from('notifications')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .eq('notification_type', notificationType)
+    .limit(1)
+
+  if (leadId) q = q.eq('lead_id', leadId)
+  if (metadataKey && metadataValue != null) {
+    q = q.contains('metadata', { [metadataKey]: metadataValue })
+  }
+
+  const { data } = await q
+  return (data?.length ?? 0) > 0
+}
+
 async function findProfileIdByName(organizationId, fullName, client) {
   if (!fullName?.trim() || !organizationId) return null
   const db = client ?? supabase
@@ -54,6 +71,17 @@ export async function createNotification(
 export async function createHotLeadNotification(lead, client) {
   if (!isHotCategory(lead?.category)) return { data: null, error: null }
 
+  const db = client ?? supabase
+  if (
+    await hasExistingNotification(db, {
+      organizationId: lead.organization_id,
+      notificationType: NOTIFICATION_TYPES.HOT_LEAD_ARRIVED,
+      leadId: lead.id,
+    })
+  ) {
+    return { data: null, error: null }
+  }
+
   const assigneeId = await findProfileIdByName(
     lead.organization_id,
     lead.assigned_to,
@@ -75,6 +103,19 @@ export async function createHotLeadNotification(lead, client) {
 }
 
 export async function createLeadAssignedNotification(lead, assigneeName, client) {
+  const db = client ?? supabase
+  if (
+    await hasExistingNotification(db, {
+      organizationId: lead.organization_id,
+      notificationType: NOTIFICATION_TYPES.LEAD_ASSIGNED,
+      leadId: lead.id,
+      metadataKey: 'assigned_to',
+      metadataValue: assigneeName,
+    })
+  ) {
+    return { data: null, error: null }
+  }
+
   const assigneeId = await findProfileIdByName(lead.organization_id, assigneeName, client)
 
   return createNotification(
@@ -92,6 +133,17 @@ export async function createLeadAssignedNotification(lead, assigneeName, client)
 }
 
 export async function createLeadConvertedNotification(lead, client) {
+  const db = client ?? supabase
+  if (
+    await hasExistingNotification(db, {
+      organizationId: lead.organization_id,
+      notificationType: NOTIFICATION_TYPES.LEAD_CONVERTED,
+      leadId: lead.id,
+    })
+  ) {
+    return { data: null, error: null }
+  }
+
   const assigneeId = await findProfileIdByName(
     lead.organization_id,
     lead.assigned_to,

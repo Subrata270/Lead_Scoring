@@ -16,12 +16,23 @@ import { isSalesperson, seesAllOrgLeads } from '../utils/access.js'
 import { isHotCategory, isNewHotLeadEvent, sortLeadsByScoreDesc } from '../utils/leadHot'
 import { playHotLeadChime } from '../utils/hotLeadSound.js'
 import { computeGlobalResponseStats } from '../utils/analyticsAggregates.js'
+import { computeConversionRate } from '../utils/analyticsHelpers.js'
 import { formatDurationMs } from '../utils/responseTimeFormat.js'
 import { exportLeadsCsv } from '../utils/csvExport.js'
 import { importFromHubSpot } from '../services/hubspotImportService.js'
+import { computeDashboardHealth, countHealthBuckets } from '../utils/leadHealth.js'
+import { isTaskOverdue } from '../utils/taskHelpers.js'
 import LeadRow from './LeadRow.jsx'
 import TaskModal from './TaskModal.jsx'
 import HotLeadToast from './HotLeadToast.jsx'
+import EmptyState, { EmptyInboxIcon, EmptySearchIcon } from './EmptyState.jsx'
+import {
+  KpiConversionIcon,
+  KpiHotIcon,
+  KpiLeadsIcon,
+  KpiResponseIcon,
+  KpiTasksIcon,
+} from './KpiIcons.jsx'
 
 function mergeRealtimeLead(prevList, row) {
   const idx = prevList.findIndex((l) => l.id === row.id)
@@ -71,6 +82,7 @@ export default function Dashboard() {
   const [dateTo, setDateTo] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [filterHealth, setFilterHealth] = useState('')
   const [hubspotImporting, setHubspotImporting] = useState(false)
   const [hubspotMessage, setHubspotMessage] = useState(null)
 
@@ -308,6 +320,13 @@ export default function Dashboard() {
       list = list.filter((l) => l.created_at && new Date(l.created_at) <= end)
     }
     if (hotOnly) list = list.filter((l) => isHotCategory(l.category))
+    if (filterHealth === 'overdue') {
+      list = list.filter((l) =>
+        (tasksByLeadId[l.id] ?? []).some((t) => isTaskOverdue(t.due_date, t.status)),
+      )
+    } else if (filterHealth) {
+      list = list.filter((l) => computeDashboardHealth(l, tasksByLeadId[l.id] ?? []) === filterHealth)
+    }
     const mineOnly = salesRestricted || myLeadsOnly
     if (mineOnly && profileName) {
       list = list.filter((l) => (l.assigned_to || '').trim() === profileName)
@@ -322,12 +341,16 @@ export default function Dashboard() {
     dateFrom,
     dateTo,
     hotOnly,
+    filterHealth,
+    tasksByLeadId,
     myLeadsOnly,
     profileName,
     salesRestricted,
   ])
 
   const responseStats = useMemo(() => computeGlobalResponseStats(leads), [leads])
+  const conversionStats = useMemo(() => computeConversionRate(leads), [leads])
+  const healthCounts = useMemo(() => countHealthBuckets(leads, tasksByLeadId), [leads, tasksByLeadId])
 
   const stats = useMemo(() => {
     const total = filteredLeads.length
@@ -353,6 +376,7 @@ export default function Dashboard() {
     setSearchQuery('')
     setMyLeadsOnly(false)
     setHotOnly(false)
+    setFilterHealth('')
     setFilterSource('')
     setFilterStatus('')
     setFilterAssignee('')
@@ -368,6 +392,7 @@ export default function Dashboard() {
     dateFrom ||
     dateTo ||
     hotOnly ||
+    filterHealth ||
     (!salesRestricted && myLeadsOnly)
 
   const hasAdvancedFilters =
@@ -431,24 +456,76 @@ export default function Dashboard() {
       </header>
 
       <div className="dashboard-kpi-row" aria-label="Key metrics">
-        <div className="dashboard-kpi-compact">
-          <span className="dashboard-kpi-label">Total Leads</span>
-          <strong className="dashboard-kpi-value">{stats.total}</strong>
+        <div className="kpi-card kpi-card--leads">
+          <div className="kpi-card-icon" aria-hidden>
+            <KpiLeadsIcon />
+          </div>
+          <div className="kpi-card-body">
+            <span className="kpi-card-label">Total Leads</span>
+            <strong className="kpi-card-value">{stats.total}</strong>
+          </div>
         </div>
-        <div className="dashboard-kpi-compact dashboard-kpi-compact--hot">
-          <span className="dashboard-kpi-label">Hot Leads</span>
-          <strong className="dashboard-kpi-value">{stats.hot}</strong>
+        <div className="kpi-card kpi-card--conv">
+          <div className="kpi-card-icon" aria-hidden>
+            <KpiConversionIcon />
+          </div>
+          <div className="kpi-card-body">
+            <span className="kpi-card-label">Conversion Rate</span>
+            <strong className="kpi-card-value">
+              {conversionStats.total ? `${conversionStats.rate.toFixed(1)}%` : '—'}
+            </strong>
+            <span className="kpi-card-sub">
+              {conversionStats.converted}/{conversionStats.total}
+            </span>
+          </div>
         </div>
-        <div className="dashboard-kpi-compact">
-          <span className="dashboard-kpi-label">Pending Tasks</span>
-          <strong className="dashboard-kpi-value">{stats.pending}</strong>
+        <div className="kpi-card kpi-card--hot">
+          <div className="kpi-card-icon" aria-hidden>
+            <KpiHotIcon />
+          </div>
+          <div className="kpi-card-body">
+            <span className="kpi-card-label">Hot Leads</span>
+            <strong className="kpi-card-value">{stats.hot}</strong>
+          </div>
         </div>
-        <div className="dashboard-kpi-compact">
-          <span className="dashboard-kpi-label">Avg Response</span>
-          <strong className="dashboard-kpi-value">
-            {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
-          </strong>
+        <div className="kpi-card kpi-card--tasks">
+          <div className="kpi-card-icon" aria-hidden>
+            <KpiTasksIcon />
+          </div>
+          <div className="kpi-card-body">
+            <span className="kpi-card-label">Pending Tasks</span>
+            <strong className="kpi-card-value">{stats.pending}</strong>
+          </div>
         </div>
+        <div className="kpi-card kpi-card--response">
+          <div className="kpi-card-icon" aria-hidden>
+            <KpiResponseIcon />
+          </div>
+          <div className="kpi-card-body">
+            <span className="kpi-card-label">Avg Response</span>
+            <strong className="kpi-card-value">
+              {responseStats.count ? formatDurationMs(responseStats.avg) : '—'}
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="dashboard-health-filters" role="group" aria-label="Lead health filters">
+        {[
+          { id: 'critical', label: 'Critical', count: healthCounts.critical },
+          { id: 'stale', label: 'Stale', count: healthCounts.stale },
+          { id: 'overdue', label: 'Overdue tasks', count: healthCounts.overdue },
+        ].map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            className={`dashboard-health-chip dashboard-health-chip--${chip.id}${filterHealth === chip.id ? ' is-active' : ''}`}
+            onClick={() => setFilterHealth((v) => (v === chip.id ? '' : chip.id))}
+          >
+            {chip.label}
+            {chip.count > 0 ? <span className="dashboard-health-chip-count">{chip.count}</span> : null}
+          </button>
+        ))}
       </div>
 
       <div className="dashboard-filter-bar">
@@ -579,20 +656,33 @@ export default function Dashboard() {
       ) : null}
 
       {loading ? (
-        <p className="muted dashboard-loading">Loading leads…</p>
+        <div className="card dashboard-loading-state" aria-busy="true">
+          <div className="loading-spinner" aria-hidden />
+          <p className="muted">Loading leads…</p>
+        </div>
       ) : leads.length === 0 ? (
-        <div className="card empty-state dashboard-empty">
-          <p>No leads yet.</p>
-          <Link className="btn btn-primary btn-sm" to="/add-lead">
-            + Add Lead
-          </Link>
+        <div className="card dashboard-empty">
+          <EmptyState
+            icon={<EmptyInboxIcon />}
+            title="No leads yet"
+            description="Add your first lead or import from HubSpot to start scoring and assigning."
+          >
+            <Link className="btn btn-primary btn-sm" to="/add-lead">
+              + Add Lead
+            </Link>
+          </EmptyState>
         </div>
       ) : filteredLeads.length === 0 ? (
-        <div className="card empty-state dashboard-empty">
-          <p>No leads match this filter.</p>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
-            Clear filters
-          </button>
+        <div className="card dashboard-empty">
+          <EmptyState
+            icon={<EmptySearchIcon />}
+            title="No leads match this filter"
+            description="Try adjusting your search or clearing filters to see more results."
+          >
+            <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
+              Clear filters
+            </button>
+          </EmptyState>
         </div>
       ) : (
         <div className="table-wrap card table-scroll dashboard-table-wrap dashboard-table-wrap--crm">
@@ -618,6 +708,7 @@ export default function Dashboard() {
                   key={lead.id}
                   lead={lead}
                   tasks={tasksByLeadId[lead.id] ?? []}
+                  healthFlag={computeDashboardHealth(lead, tasksByLeadId[lead.id] ?? [])}
                   assigneeOptions={
                     salesRestricted && profileName ? [profileName] : assigneeFilterOptions
                   }

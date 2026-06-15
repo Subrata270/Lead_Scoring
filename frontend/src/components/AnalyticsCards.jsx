@@ -10,6 +10,20 @@ function pctBar(pct) {
   )
 }
 
+export function ConversionRateHero({ conversion }) {
+  if (!conversion) return null
+  const { total, converted, rate } = conversion
+  return (
+    <div className="card conversion-hero-kpi">
+      <div className="conversion-hero-label">Conversion rate</div>
+      <div className="conversion-hero-value">{total ? `${rate.toFixed(1)}%` : '—'}</div>
+      <div className="conversion-hero-meta muted">
+        {converted.toLocaleString()} converted of {total.toLocaleString()} leads
+      </div>
+    </div>
+  )
+}
+
 export function ConversionFunnelCards({ funnel }) {
   if (!funnel || funnel.total === 0) {
     return (

@@ -44,6 +44,19 @@ async function loadHubSpotSync() {
   return import(modUrl);
 }
 
+async function loadWhatsAppSend() {
+  const modUrl = pathToFileURL(
+    path.join(__dirname, "../frontend/src/lib/whatsappSend.js"),
+  ).href;
+  return import(modUrl);
+}
+
+function sendWhatsAppCors(res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
 function sendHubSpotCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -193,6 +206,62 @@ app.get("/api/integrations/hubspot/contacts", async (req, res) => {
     res.status(200).json(result);
   } catch (e) {
     res.status(500).json({ error: e?.message ?? "HubSpot import failed" });
+  }
+});
+
+app.options("/api/whatsapp/send", (req, res) => {
+  sendWhatsAppCors(res);
+  res.status(204).end();
+});
+
+app.post("/api/whatsapp/send", async (req, res) => {
+  sendWhatsAppCors(res);
+
+  const admin = await getAdminClient();
+  if (!admin) {
+    res.status(503).json({
+      error: "Server is not configured (set SUPABASE_SERVICE_ROLE_KEY and Supabase URL in frontend/.env).",
+    });
+    return;
+  }
+
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body || "{}");
+    } catch {
+      res.status(400).json({ error: "Invalid JSON body" });
+      return;
+    }
+  }
+
+  if (!body || typeof body !== "object") {
+    res.status(400).json({ error: "Expected a JSON object" });
+    return;
+  }
+
+  try {
+    const { sendWhatsAppToLead } = await loadWhatsAppSend();
+    const result = await sendWhatsAppToLead(admin, {
+      authHeader: req.headers.authorization,
+      leadId: body.leadId,
+      message: body.message,
+      twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
+      twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
+      twilioWhatsAppFrom: process.env.TWILIO_WHATSAPP_FROM || "",
+    });
+
+    if (!result.ok) {
+      res.status(result.status).json({
+        error: result.error,
+        ...(result.data ? { partial: result.data } : {}),
+      });
+      return;
+    }
+
+    res.status(200).json(result.data);
+  } catch (e) {
+    res.status(500).json({ error: e?.message ?? "WhatsApp send failed" });
   }
 });
 

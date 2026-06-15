@@ -44,12 +44,20 @@ export async function recordActivity(
  */
 export async function fetchLeadActivities(leadId, organizationId, client) {
   const db = client ?? supabase
-  const { data, error } = await db
+  let query = db
     .from('activities')
-    .select('id, activity_type, description, metadata, created_at, user_id')
+    .select('id, activity_type, description, metadata, created_at, user_id, lead_id, organization_id')
     .eq('lead_id', leadId)
-    .eq('organization_id', organizationId)
     .order('created_at', { ascending: false })
 
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error('[activityEngine] fetchLeadActivities failed:', error.message)
+  }
   return { data: data ?? [], error }
 }

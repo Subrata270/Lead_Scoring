@@ -293,31 +293,8 @@ export default function Signup() {
             : 'Sign up to create an organization and admin account.'}
         </p>
 
-        {inviteMode ? (
-          <div
-            className="card"
-            style={{ marginBottom: '1rem', fontSize: '0.85rem', background: 'var(--surface-2, #f4f4f5)' }}
-            aria-label="Invite debug panel"
-          >
-            <strong>Invite debug</strong>
-            <dl style={{ margin: '0.5rem 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.25rem 0.75rem' }}>
-              <dt>Invite ID</dt>
-              <dd style={{ margin: 0 }}>{inviteId || '—'}</dd>
-              <dt>Invite Found</dt>
-              <dd style={{ margin: 0 }}>{inviteFound ? 'true' : 'false'}</dd>
-              <dt>Invite Email</dt>
-              <dd style={{ margin: 0 }}>{email || '—'}</dd>
-              <dt>Invite Status</dt>
-              <dd style={{ margin: 0 }}>{inviteStatus || (inviteLoading ? 'loading…' : '—')}</dd>
-              <dt>Organization ID</dt>
-              <dd style={{ margin: 0 }}>{inviteOrganizationId || '—'}</dd>
-              <dt>Lookup Source</dt>
-              <dd style={{ margin: 0 }}>{inviteLookupSource || (inviteLoading ? 'loading…' : '—')}</dd>
-            </dl>
-          </div>
-        ) : null}
-
         {inviteLoading ? <p className="muted">Validating invitation…</p> : null}
+
         {inviteError ? (
           <div className="banner banner-error" role="alert">
             {inviteError}

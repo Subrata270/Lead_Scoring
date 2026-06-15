@@ -73,15 +73,69 @@ function normalizeUrgency(raw) {
   return ALLOWED_URGENCY.has(u) ? u : 'medium'
 }
 
-export async function fetchCsvImportHistory(organizationId, { limit = 20 } = {}) {
-  const { data, error } = await supabase
+export async function fetchCsvImportHistory(
+  organizationId,
+  { limit = 10, offset = 0, sourceFilter = '' } = {},
+) {
+  let q = supabase
     .from('csv_imports')
-    .select('id, file_name, total_rows, imported_rows, failed_rows, created_at')
+    .select(
+      'id, file_name, total_rows, imported_rows, failed_rows, created_at, created_by, source',
+      { count: 'exact' },
+    )
     .eq('organization_id', organizationId)
     .order('created_at', { ascending: false })
-    .limit(limit)
 
-  return { data: data ?? [], error }
+  if (sourceFilter) {
+    q = q.eq('source', sourceFilter)
+  }
+
+  q = q.range(offset, offset + limit - 1)
+
+  const { data, error, count } = await q
+
+  if (error?.message?.includes('source') || error?.code === '42703') {
+    let fallbackQ = supabase
+      .from('csv_imports')
+      .select(
+        'id, file_name, total_rows, imported_rows, failed_rows, created_at, created_by',
+        { count: 'exact' },
+      )
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false })
+    if (sourceFilter) fallbackQ = fallbackQ.eq('source', sourceFilter)
+    fallbackQ = fallbackQ.range(offset, offset + limit - 1)
+    const fallback = await fallbackQ
+    if (fallback.error) return { data: [], error: fallback.error, total: 0 }
+    const enrichedFallback = (fallback.data ?? []).map((r) => ({
+      ...r,
+      source: 'csv',
+      imported_by: '—',
+      skipped_rows: r.failed_rows ?? 0,
+    }))
+    return { data: enrichedFallback, error: null, total: fallback.count ?? enrichedFallback.length }
+  }
+
+  const rows = data ?? []
+  const creatorIds = [...new Set(rows.map((r) => r.created_by).filter(Boolean))]
+  let nameById = {}
+
+  if (creatorIds.length) {
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', creatorIds)
+    nameById = Object.fromEntries((profs ?? []).map((p) => [p.id, p.full_name]))
+  }
+
+  const enriched = rows.map((r) => ({
+    ...r,
+    source: r.source ?? 'csv',
+    imported_by: nameById[r.created_by] ?? (r.created_by ? 'Team member' : '—'),
+    skipped_rows: r.failed_rows ?? 0,
+  }))
+
+  return { data: enriched, error, total: count ?? enriched.length }
 }
 
 /**
@@ -125,6 +179,7 @@ export async function bulkImportLeads({
     .insert({
       organization_id: organizationId,
       file_name: fileName,
+      source: 'csv',
       total_rows: rows.length,
       imported_rows: imported.length,
       failed_rows: failed.length,

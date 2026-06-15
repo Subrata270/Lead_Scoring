@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, startTransition } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { getDateRangeFromPreset } from '../utils/analyticsHelpers.js'
+import { getDateRangeFromPreset, getPreviousPeriodRange } from '../utils/analyticsHelpers.js'
 
 const LEAD_SELECT = [
   'id',
@@ -28,27 +28,12 @@ const LEAD_SELECT = [
 export function useAnalyticsData(range, scope = {}) {
   const { organizationId = null, assignedToFilter = null } = scope
   const [leads, setLeads] = useState([])
+  const [previousLeads, setPreviousLeads] = useState([])
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-
-    if (!organizationId) {
-      setLeads([])
-      setTasks([])
-      setLoading(false)
-      return
-    }
-
-    const { startIso, endIso } = getDateRangeFromPreset(
-      range.preset,
-      range.customFrom,
-      range.customTo,
-    )
-
+  async function fetchLeadsForRange(startIso, endIso) {
     let leadsQuery = supabase
       .from('leads')
       .select(LEAD_SELECT)
@@ -61,17 +46,45 @@ export function useAnalyticsData(range, scope = {}) {
       leadsQuery = leadsQuery.eq('assigned_to', assignedToFilter)
     }
 
-    const { data: leadRows, error: leadsError } = await leadsQuery
+    const { data, error: leadsError } = await leadsQuery
+    return { data: data ?? [], error: leadsError }
+  }
 
-    if (leadsError) {
-      setLoading(false)
-      setError(leadsError.message)
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+
+    if (!organizationId) {
       setLeads([])
+      setPreviousLeads([])
+      setTasks([])
+      setLoading(false)
+      return
+    }
+
+    const { startIso, endIso } = getDateRangeFromPreset(
+      range.preset,
+      range.customFrom,
+      range.customTo,
+    )
+    const prevRange = getPreviousPeriodRange(range.preset, range.customFrom, range.customTo)
+
+    const [currentResult, prevResult] = await Promise.all([
+      fetchLeadsForRange(startIso, endIso),
+      fetchLeadsForRange(prevRange.startIso, prevRange.endIso),
+    ])
+
+    if (currentResult.error) {
+      setLoading(false)
+      setError(currentResult.error.message)
+      setLeads([])
+      setPreviousLeads([])
       setTasks([])
       return
     }
 
-    const list = leadRows ?? []
+    const list = currentResult.data
+    setPreviousLeads(prevResult.error ? [] : prevResult.data)
     let taskRows = []
 
     if (list.length > 0) {
@@ -103,5 +116,13 @@ export function useAnalyticsData(range, scope = {}) {
     })
   }, [load])
 
-  return { leads, tasks, loading, error, reload: load, rangeKey: `${range.preset}-${range.customFrom}-${range.customTo}` }
+  return {
+    leads,
+    previousLeads,
+    tasks,
+    loading,
+    error,
+    reload: load,
+    rangeKey: `${range.preset}-${range.customFrom}-${range.customTo}`,
+  }
 }

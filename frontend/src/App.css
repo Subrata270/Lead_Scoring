@@ -3165,6 +3165,24 @@
   pointer-events: none;
 }
 
+.lead-icon-btn--whatsapp:hover:not(.lead-icon-btn--disabled) {
+  color: #128c7e;
+  border-color: color-mix(in srgb, #128c7e 40%, var(--border));
+}
+
+.lead-row-toast {
+  margin: 0 0 0.75rem;
+}
+
+.message-modal-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+}
+
+.message-modal-error {
+  margin-top: 0.75rem;
+}
+
 .badge-hot-now--compact {
   font-size: 0.72rem;
   padding: 0.05rem 0.25rem;
@@ -3311,4 +3329,143 @@
 @media (max-width: 768px) {
   .dashboard-kpi-row { grid-template-columns: repeat(2, 1fr); }
   .dashboard-crm-header { flex-direction: column; }
+  .dashboard-health-filters { flex-wrap: wrap; }
+  .qa-item { flex-direction: column; align-items: flex-start; }
 }
+
+/* Conversion hero KPI */
+.conversion-hero-kpi {
+  margin-bottom: 1rem;
+  text-align: center;
+  padding: 1.25rem 1rem;
+}
+.conversion-hero-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #64748b);
+}
+.conversion-hero-value {
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: var(--text-h, #0f172a);
+  line-height: 1.2;
+}
+.conversion-hero-meta { font-size: 0.875rem; margin-top: 0.25rem; }
+
+.dashboard-kpi-compact--conv {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.dashboard-kpi-sub {
+  display: block;
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+}
+
+/* Lead health filters & row highlights */
+.dashboard-health-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.dashboard-health-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dashboard-health-chip.is-active {
+  border-color: var(--primary, #2563eb);
+  background: rgba(37, 99, 235, 0.08);
+}
+.dashboard-health-chip-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+}
+.lead-row--health-critical { box-shadow: inset 3px 0 0 #ef4444; }
+.lead-row--health-stale { box-shadow: inset 3px 0 0 #f59e0b; }
+.lead-row--health-overdue { box-shadow: inset 3px 0 0 #8b5cf6; }
+.badge-health { font-size: 0.65rem; margin-left: 0.25rem; }
+.badge-health--critical { color: #ef4444; }
+.badge-health--stale { color: #f59e0b; }
+.badge-health--overdue { color: #8b5cf6; }
+
+/* Source trend indicators */
+.trend-badge {
+  margin-left: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.trend-up { color: #16a34a; }
+.trend-down { color: #dc2626; }
+.trend-neutral { color: #94a3b8; }
+
+/* Loading & empty states */
+.dashboard-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 1rem;
+}
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border, #e2e8f0);
+  border-top-color: var(--primary, #2563eb);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Import history */
+.csv-history-toolbar { margin-bottom: 0.75rem; }
+.csv-history-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+/* QA checklist */
+.qa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.qa-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.qa-item--done .qa-item-label span { text-decoration: line-through; color: var(--text-muted, #64748b); }
+.qa-item-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.qa-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.qa-auto-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+.qa-auto-badge--pass { background: rgba(34, 197, 94, 0.15); color: #15803d; }
+.qa-auto-badge--fail { background: rgba(239, 68, 68, 0.15); color: #b91c1c; }

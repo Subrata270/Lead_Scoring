@@ -99,6 +99,27 @@ export function getDateRangeFromPreset(preset, customFrom, customTo) {
   }
 }
 
+/** Previous period of equal length (for trend comparison). */
+export function getPreviousPeriodRange(preset, customFrom, customTo) {
+  const current = getDateRangeFromPreset(preset, customFrom, customTo)
+  const startMs = new Date(current.startIso).getTime()
+  const endMs = new Date(current.endIso).getTime()
+  const spanMs = Math.max(endMs - startMs, 86400000)
+  const prevEnd = new Date(startMs - 1)
+  const prevStart = new Date(prevEnd.getTime() - spanMs)
+  return {
+    startIso: prevStart.toISOString(),
+    endIso: prevEnd.toISOString(),
+  }
+}
+
+export function computeConversionRate(leads) {
+  const total = leads?.length ?? 0
+  if (total === 0) return { total: 0, converted: 0, rate: 0 }
+  const converted = leads.filter(isConvertedLead).length
+  return { total, converted, rate: (converted / total) * 100 }
+}
+
 export function indexTasksByLeadId(tasks) {
   const map = {}
   for (const t of tasks || []) {
@@ -160,6 +181,7 @@ export function aggregateBySource(leads) {
         converted_leads: 0,
         response_ms_samples: [],
         hot_leads: 0,
+        score_samples: [],
       })
     }
     const row = map.get(source)
@@ -168,6 +190,8 @@ export function aggregateBySource(leads) {
     if (isHotLead(l)) row.hot_leads += 1
     const ms = responseMs(l)
     if (ms != null) row.response_ms_samples.push(ms)
+    const sc = Number(l.score)
+    if (Number.isFinite(sc)) row.score_samples.push(sc)
   }
 
   const rows = [...map.values()].map((r) => ({
@@ -180,6 +204,10 @@ export function aggregateBySource(leads) {
         ? r.response_ms_samples.reduce((a, b) => a + b, 0) / r.response_ms_samples.length
         : null,
     hot_lead_pct: r.total_leads ? (r.hot_leads / r.total_leads) * 100 : 0,
+    avg_score:
+      r.score_samples.length > 0
+        ? r.score_samples.reduce((a, b) => a + b, 0) / r.score_samples.length
+        : null,
   }))
 
   rows.sort((a, b) => {
@@ -203,6 +231,39 @@ export function bestWorstSource(rows) {
     if (r.conversion_rate < worst.conversion_rate) worst = r
   }
   return { best, worst }
+}
+
+/**
+ * Compare current vs previous period source rows for trend arrows.
+ * @returns {Map<string, { leads_trend: string, conversion_trend: string, avg_score_trend: string }>}
+ */
+export function computeSourceTrends(currentRows, previousRows) {
+  const prevMap = new Map((previousRows ?? []).map((r) => [r.source, r]))
+  const trends = new Map()
+
+  function trendDir(current, previous) {
+    if (current == null || previous == null) return 'neutral'
+    const delta = current - previous
+    if (Math.abs(delta) < 0.5) return 'neutral'
+    return delta > 0 ? 'up' : 'down'
+  }
+
+  for (const row of currentRows ?? []) {
+    const prev = prevMap.get(row.source)
+    trends.set(row.source, {
+      leads_trend: trendDir(row.total_leads, prev?.total_leads ?? null),
+      conversion_trend: trendDir(row.conversion_rate, prev?.conversion_rate ?? null),
+      avg_score_trend: trendDir(row.avg_score, prev?.avg_score ?? null),
+    })
+  }
+  return trends
+}
+
+export function trendIndicator(dir, invert = false) {
+  if (dir === 'neutral' || !dir) return { symbol: '—', className: 'trend-neutral' }
+  const effective = invert ? (dir === 'up' ? 'down' : 'up') : dir
+  if (effective === 'up') return { symbol: '↑', className: 'trend-up' }
+  return { symbol: '↓', className: 'trend-down' }
 }
 
 function assigneeKey(lead) {
@@ -346,6 +407,7 @@ export function aggregateByIndustry(leads) {
       industry: r.industry,
       lead_count: r.lead_count,
       hot_count: r.hot_count,
+      converted: r.converted,
       hot_pct: r.lead_count ? (r.hot_count / r.lead_count) * 100 : 0,
       conversion_rate: r.lead_count ? (r.converted / r.lead_count) * 100 : 0,
       avg_budget:

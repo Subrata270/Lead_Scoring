@@ -33,7 +33,7 @@ export function SourceConversionBarChart({ data }) {
             formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Conversion']}
             labelFormatter={(label) => `Source: ${label}`}
           />
-          <Bar dataKey="conversion_rate" name="conversion_rate" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="conversion_rate" name="conversion_rate" fill="var(--chart-primary)" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -52,7 +52,7 @@ export function LeadsPerDayLineChart({ data }) {
           <XAxis dataKey="date" tick={{ fontSize: 10 }} angle={-20} textAnchor="end" height={64} />
           <YAxis allowDecimals={false} width={36} tick={{ fontSize: 11 }} />
           <Tooltip />
-          <Line type="monotone" dataKey="leads_count" name="Leads" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="leads_count" name="Leads" stroke="var(--chart-secondary)" strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
     </div>

@@ -18,6 +18,7 @@ const Team = lazy(() => import('./pages/Team.jsx'))
 const Notifications = lazy(() => import('./pages/Notifications.jsx'))
 const ImportLeads = lazy(() => import('./pages/ImportLeads.jsx'))
 const AssignmentRules = lazy(() => import('./pages/AssignmentRules.jsx'))
+const QA = lazy(() => import('./pages/QA.jsx'))
 
 function NotificationsPage() {
   const { organization, user } = useAuth()
@@ -130,6 +131,20 @@ function Layout() {
             }
           />
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route
+            path="/qa"
+            element={
+              <Suspense
+                fallback={
+                  <div className="page page-wide">
+                    <p className="muted">Loading QA checklist…</p>
+                  </div>
+                }
+              >
+                <QA />
+              </Suspense>
+            }
+          />
         </Routes>
       </main>
     </div>

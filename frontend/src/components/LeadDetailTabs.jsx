@@ -27,6 +27,7 @@ export default function LeadDetailTabs({
   onMarkTaskDone,
   onAddTask,
   initialTab = 'overview',
+  timelineRefreshKey = 0,
 }) {
   const [activeTab, setActiveTab] = useState(initialTab)
 
@@ -119,7 +120,11 @@ export default function LeadDetailTabs({
         ) : null}
 
         {activeTab === 'timeline' ? (
-          <LeadTimeline leadId={lead.id} organizationId={organizationId} />
+          <LeadTimeline
+            leadId={lead.id}
+            organizationId={organizationId}
+            refreshKey={timelineRefreshKey}
+          />
         ) : null}
 
         {activeTab === 'copilot' ? (

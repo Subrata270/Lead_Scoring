@@ -39,14 +39,24 @@ export default function ImportLeads() {
   const [dragOver, setDragOver] = useState(false)
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historySourceFilter, setHistorySourceFilter] = useState('')
+
+  const HISTORY_PAGE_SIZE = 10
 
   const loadHistory = useCallback(async () => {
     if (!orgId) return
     setHistoryLoading(true)
-    const { data } = await fetchCsvImportHistory(orgId)
+    const { data, total } = await fetchCsvImportHistory(orgId, {
+      limit: HISTORY_PAGE_SIZE,
+      offset: historyPage * HISTORY_PAGE_SIZE,
+      sourceFilter: historySourceFilter,
+    })
     setHistory(data)
+    setHistoryTotal(total)
     setHistoryLoading(false)
-  }, [orgId])
+  }, [orgId, historyPage, historySourceFilter])
 
   useEffect(() => {
     void loadHistory()
@@ -307,35 +317,80 @@ export default function ImportLeads() {
 
       <section className="card csv-section csv-history">
         <h2 className="analytics-section-title">Import history</h2>
+        <div className="csv-history-toolbar">
+          <label className="inline-field">
+            <span>Source</span>
+            <select
+              value={historySourceFilter}
+              onChange={(e) => {
+                setHistorySourceFilter(e.target.value)
+                setHistoryPage(0)
+              }}
+            >
+              <option value="">All sources</option>
+              <option value="csv">CSV</option>
+              <option value="hubspot">HubSpot</option>
+            </select>
+          </label>
+        </div>
         {historyLoading ? (
           <p className="muted">Loading history…</p>
         ) : history.length === 0 ? (
           <p className="muted">No imports yet.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>File</th>
-                  <th className="num">Imported</th>
-                  <th className="num">Failed</th>
-                  <th className="num">Total</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((h) => (
-                  <tr key={h.id}>
-                    <td>{h.file_name}</td>
-                    <td className="num">{h.imported_rows}</td>
-                    <td className="num">{h.failed_rows}</td>
-                    <td className="num">{h.total_rows}</td>
-                    <td>{formatAt(h.created_at)}</td>
+          <>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>File</th>
+                    <th className="num">Imported</th>
+                    <th className="num">Skipped</th>
+                    <th className="num">Total</th>
+                    <th>Imported by</th>
+                    <th>Date</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {history.map((h) => (
+                    <tr key={h.id}>
+                      <td>{h.source ?? 'csv'}</td>
+                      <td>{h.file_name}</td>
+                      <td className="num">{h.imported_rows}</td>
+                      <td className="num">{h.skipped_rows ?? h.failed_rows}</td>
+                      <td className="num">{h.total_rows}</td>
+                      <td>{h.imported_by}</td>
+                      <td>{formatAt(h.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {historyTotal > HISTORY_PAGE_SIZE ? (
+              <div className="csv-history-pagination">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={historyPage === 0}
+                  onClick={() => setHistoryPage((p) => p - 1)}
+                >
+                  Previous
+                </button>
+                <span className="muted">
+                  Page {historyPage + 1} of {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal}
+                  onClick={() => setHistoryPage((p) => p + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
     </div>

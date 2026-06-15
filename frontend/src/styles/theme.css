@@ -1,0 +1,172 @@
+/* ── AI Lead Scoring — Design tokens (Linear / Vercel inspired) ── */
+
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08), 0 4px 8px rgba(0, 0, 0, 0.04);
+
+  --transition-fast: 120ms ease;
+  --transition-base: 200ms ease;
+  --transition-theme: 250ms ease;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+/* Light theme (default) */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f8fafc;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-hover: #f8fafc;
+  --surface-row: #ffffff;
+  --surface-row-hover: #f8fafc;
+
+  --text: #64748b;
+  --text-secondary: #94a3b8;
+  --text-h: #0f172a;
+  --text-muted: #64748b;
+
+  --border: #e2e8f0;
+  --border-subtle: #f1f5f9;
+  --border-strong: #cbd5e1;
+
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-muted: rgba(99, 102, 241, 0.1);
+  --accent-border: rgba(99, 102, 241, 0.35);
+
+  --code-bg: #f1f5f9;
+  --social-bg: #f8fafc;
+
+  --success: #10b981;
+  --success-muted: rgba(16, 185, 129, 0.12);
+  --warning: #f59e0b;
+  --warning-muted: rgba(245, 158, 11, 0.12);
+  --danger: #ef4444;
+  --danger-muted: rgba(239, 68, 68, 0.1);
+  --info: #3b82f6;
+  --info-muted: rgba(59, 130, 246, 0.1);
+
+  --status-new: #3b82f6;
+  --status-new-bg: rgba(59, 130, 246, 0.1);
+  --status-contacted: #8b5cf6;
+  --status-contacted-bg: rgba(139, 92, 246, 0.1);
+  --status-qualified: #22c55e;
+  --status-qualified-bg: rgba(34, 197, 94, 0.1);
+  --status-converted: #059669;
+  --status-converted-bg: rgba(5, 150, 105, 0.1);
+  --status-lost: #ef4444;
+  --status-lost-bg: rgba(239, 68, 68, 0.1);
+
+  --cat-hot: #ef4444;
+  --cat-hot-bg: rgba(239, 68, 68, 0.1);
+  --cat-warm: #f97316;
+  --cat-warm-bg: rgba(249, 115, 22, 0.1);
+  --cat-cold: #3b82f6;
+  --cat-cold-bg: rgba(59, 130, 246, 0.1);
+
+  --chart-primary: #6366f1;
+  --chart-secondary: #3b82f6;
+  --chart-grid: #e2e8f0;
+
+  --nav-bg: rgba(255, 255, 255, 0.85);
+  --modal-backdrop: rgba(15, 23, 42, 0.45);
+
+  /* Legacy aliases used in App.css */
+  --shadow: var(--shadow-md);
+}
+
+/* Dark theme */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0b0f19;
+  --bg-elevated: #111827;
+  --surface: #151c2c;
+  --surface-2: #1a2234;
+  --surface-hover: #1e293b;
+  --surface-row: #151c2c;
+  --surface-row-hover: #1a2234;
+
+  --text: #94a3b8;
+  --text-secondary: #64748b;
+  --text-h: #f1f5f9;
+  --text-muted: #94a3b8;
+
+  --border: #1e293b;
+  --border-subtle: #151c2c;
+  --border-strong: #334155;
+
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-muted: rgba(129, 140, 248, 0.15);
+  --accent-border: rgba(129, 140, 248, 0.4);
+
+  --code-bg: #1e293b;
+  --social-bg: #151c2c;
+
+  --success: #34d399;
+  --success-muted: rgba(52, 211, 153, 0.12);
+  --warning: #fbbf24;
+  --warning-muted: rgba(251, 191, 36, 0.12);
+  --danger: #f87171;
+  --danger-muted: rgba(248, 113, 113, 0.12);
+  --info: #60a5fa;
+  --info-muted: rgba(96, 165, 250, 0.12);
+
+  --status-new: #60a5fa;
+  --status-new-bg: rgba(96, 165, 250, 0.12);
+  --status-contacted: #a78bfa;
+  --status-contacted-bg: rgba(167, 139, 250, 0.12);
+  --status-qualified: #4ade80;
+  --status-qualified-bg: rgba(74, 222, 128, 0.12);
+  --status-converted: #34d399;
+  --status-converted-bg: rgba(52, 211, 153, 0.12);
+  --status-lost: #f87171;
+  --status-lost-bg: rgba(248, 113, 113, 0.12);
+
+  --cat-hot: #f87171;
+  --cat-hot-bg: rgba(248, 113, 113, 0.12);
+  --cat-warm: #fb923c;
+  --cat-warm-bg: rgba(251, 146, 60, 0.12);
+  --cat-cold: #60a5fa;
+  --cat-cold-bg: rgba(96, 165, 250, 0.12);
+
+  --chart-primary: #818cf8;
+  --chart-secondary: #60a5fa;
+  --chart-grid: #1e293b;
+
+  --nav-bg: rgba(11, 15, 25, 0.88);
+  --modal-backdrop: rgba(0, 0, 0, 0.65);
+}
+
+html {
+  transition: background-color var(--transition-theme), color var(--transition-theme);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}

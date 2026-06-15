@@ -24,14 +24,6 @@ function categoryPillClass(category) {
   return 'pill'
 }
 
-function rowHeatClass(category) {
-  const c = (category || '').toLowerCase()
-  if (c === 'hot') return 'lead-row lead-row--hot'
-  if (c === 'warm') return 'lead-row lead-row--warm'
-  if (c === 'cold') return 'lead-row lead-row--cold'
-  return 'lead-row'
-}
-
 function suggestionToneClass(tone) {
   return `suggestion-chip suggestion-chip--${tone}`
 }
@@ -70,12 +62,30 @@ function IconBtn({ title, onClick, disabled, href, children, className = '' }) {
   )
 }
 
+function WhatsAppIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 2a10 10 0 0 0-8.66 15l-1.17 4.3 4.42-1.16A10 10 0 1 0 12 2Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.5 9.5c.3.8 1.2 2.4 3 3.8 1.5 1.2 3 1.7 3.6 1.9l1.5-1.6c.2-.2.5-.2.7 0l1.2.9c.2.2.2.5 0 .7-.4.5-1.1 1.2-1.6 1.5-.6.4-1.3.3-2.2 0-1-.4-2.4-1.2-4.2-3.1-1.8-1.9-2.7-3.5-3.1-4.5-.3-.9-.4-1.6 0-2.2.3-.4 1-1.1 1.5-1.6.2-.2.5-.2.7 0l.9 1.2c.2.2.2.5 0 .7l-1.6 1.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
 export default function LeadRow({
   lead,
   tasks,
   assigneeOptions = CRM_USERS,
   expanded,
   pulseHot,
+  healthFlag = null,
   onToggleExpand,
   onLeadPatch,
   onTaskPatch,
@@ -87,8 +97,11 @@ export default function LeadRow({
 
   const [savingField, setSavingField] = useState(null)
   const [messageOpen, setMessageOpen] = useState(false)
+  const [whatsappOpen, setWhatsappOpen] = useState(false)
   const [messageLogged, setMessageLogged] = useState(false)
   const [detailTab, setDetailTab] = useState('overview')
+  const [timelineRefreshKey, setTimelineRefreshKey] = useState(0)
+  const [toast, setToast] = useState(null)
 
   const { config: scoringRow } = useScoringConfig(
     expanded ? lead.industry_id : null,
@@ -248,6 +261,21 @@ export default function LeadRow({
     }
   }
 
+  async function applyEngagementRescore(reason) {
+    if (lead.responded) {
+      const { lead: rescored } = await rescoreLead(lead, { reason, userId })
+      onLeadPatch(lead.id, rescored)
+      return rescored
+    }
+    const leadPatch = { responded: true }
+    const { error: leadErr } = await supabase.from('leads').update(leadPatch).eq('id', lead.id)
+    if (leadErr) return lead
+    const updatedLead = { ...lead, ...leadPatch }
+    const { lead: rescored } = await rescoreLead(updatedLead, { reason, userId })
+    onLeadPatch(lead.id, rescored)
+    return rescored
+  }
+
   async function handleMessageGenerated(channel) {
     if (messageLogged) return
     setMessageLogged(true)
@@ -259,9 +287,44 @@ export default function LeadRow({
       description: `Sales message generated (${channel})`,
       metadata: { channel },
     })
+    await applyEngagementRescore('Message generated — engagement signal')
+    setTimelineRefreshKey((k) => k + 1)
   }
 
-  const rowClass = [rowHeatClass(lead.category), pulseHot ? 'lead-row--hot-pulse' : '']
+  async function handleWhatsAppSent(result) {
+    if (!result?.activity) {
+      await recordActivity({
+        leadId: lead.id,
+        organizationId: orgId,
+        userId,
+        activityType: ACTIVITY_TYPES.WHATSAPP_SENT,
+        description: 'WhatsApp message sent',
+        metadata: {
+          channel: 'whatsapp',
+          to: result?.to ?? null,
+          twilio_sid: result?.sid ?? null,
+          via: 'client_fallback',
+        },
+      })
+    }
+
+    await applyEngagementRescore('WhatsApp sent — engagement signal')
+
+    setTimelineRefreshKey((k) => k + 1)
+    setDetailTab('timeline')
+    if (!expanded) onToggleExpand()
+    setToast({ type: 'success', text: 'WhatsApp message sent.' })
+    window.setTimeout(() => setToast(null), 4000)
+  }
+
+  const rowClass = [
+    'lead-row',
+    pulseHot ? 'lead-row--hot-pulse' : '',
+    healthFlag === 'critical' ? 'lead-row--health-critical' : '',
+    healthFlag === 'stale' ? 'lead-row--health-stale' : '',
+    healthFlag === 'overdue' ? 'lead-row--health-overdue' : '',
+    healthFlag === 'at_risk' ? 'lead-row--health-at-risk' : '',
+  ]
     .filter(Boolean)
     .join(' ')
 
@@ -288,6 +351,21 @@ export default function LeadRow({
             {expanded ? '▼' : '▶'}
           </button>
           <span className="lead-name-text">{lead.name}</span>
+          {healthFlag === 'critical' ? (
+            <span className="badge badge-health badge-health--critical" title="Critical — needs immediate attention">
+              ⚠
+            </span>
+          ) : null}
+          {healthFlag === 'stale' ? (
+            <span className="badge badge-health badge-health--stale" title="Stale lead">
+              ⏳
+            </span>
+          ) : null}
+          {healthFlag === 'overdue' ? (
+            <span className="badge badge-health badge-health--overdue" title="Overdue tasks">
+              !
+            </span>
+          ) : null}
           {isHotNow(lead) ? (
             <span className="badge badge-hot-now badge-hot-now--compact" title="Hot in last 5 min">
               🔥
@@ -303,10 +381,11 @@ export default function LeadRow({
         <td className="lead-cell-truncate">{lead.source}</td>
         <td>
           <select
-            className="table-select table-select--compact"
+            className={`table-select table-select--compact status-select status-select--${statusValue}`}
             value={statusValue}
             disabled={savingField === 'status'}
             onChange={(e) => updateLead('status', e.target.value)}
+            aria-label="Lead status"
           >
             {LEAD_STATUSES.map((s) => (
               <option key={s} value={s}>
@@ -381,6 +460,14 @@ export default function LeadRow({
                 />
               </svg>
             </IconBtn>
+            <IconBtn
+              title="Send WhatsApp"
+              className="lead-icon-btn--whatsapp"
+              disabled={!telDigits}
+              onClick={() => setWhatsappOpen(true)}
+            >
+              <WhatsAppIcon />
+            </IconBtn>
             <IconBtn title="Add task" onClick={() => onAddTask(lead)}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <path d="M9 11h6M12 8v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -426,6 +513,14 @@ export default function LeadRow({
       {expanded ? (
         <tr className="lead-row-expanded">
           <td colSpan={11}>
+            {toast ? (
+              <div
+                className={`banner ${toast.type === 'error' ? 'banner-error' : 'banner-success'} lead-row-toast`}
+                role="status"
+              >
+                {toast.text}
+              </div>
+            ) : null}
             <div className="tasks-panel tasks-panel--tabs">
               <LeadDetailTabs
                 lead={lead}
@@ -435,7 +530,20 @@ export default function LeadRow({
                 onMarkTaskDone={markTaskDone}
                 onAddTask={onAddTask}
                 initialTab={detailTab}
+                timelineRefreshKey={timelineRefreshKey}
               />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+      {toast && !expanded ? (
+        <tr className="lead-toast-row">
+          <td colSpan={11}>
+            <div
+              className={`banner ${toast.type === 'error' ? 'banner-error' : 'banner-success'} lead-row-toast`}
+              role="status"
+            >
+              {toast.text}
             </div>
           </td>
         </tr>
@@ -445,6 +553,14 @@ export default function LeadRow({
           lead={lead}
           onClose={() => setMessageOpen(false)}
           onMessageGenerated={handleMessageGenerated}
+        />
+      ) : null}
+      {whatsappOpen ? (
+        <MessageModal
+          lead={lead}
+          mode="whatsapp-send"
+          onClose={() => setWhatsappOpen(false)}
+          onSent={handleWhatsAppSent}
         />
       ) : null}
     </Fragment>

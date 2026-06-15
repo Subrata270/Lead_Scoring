@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ConversionFunnelCards, IndustryHighlightCards } from '../components/AnalyticsCards.jsx'
+import { ConversionFunnelCards, ConversionRateHero, IndustryHighlightCards } from '../components/AnalyticsCards.jsx'
+import EmptyState, { EmptyInboxIcon } from '../components/EmptyState.jsx'
 import {
   BusinessTypeBarChart,
   FunnelStageBarChart,
@@ -12,7 +13,6 @@ import {
   SourceVolumeConversionChart,
 } from '../components/Charts.jsx'
 import { useAnalyticsData } from '../hooks/useAnalyticsData.js'
-import { useOpenPipelineLeads } from '../hooks/useOpenPipelineLeads.js'
 import { useAuth } from '../hooks/useAuth.js'
 import { formatDurationMs } from '../utils/responseTimeFormat'
 import { isSalesperson } from '../utils/access.js'
@@ -25,7 +25,9 @@ import {
   bestWorstSource,
   buildActivityHeatmap,
   buildAnalyticsCsv,
+  computeConversionRate,
   computeFunnelMetrics,
+  computeSourceTrends,
   downloadCsv,
   generateDashboardInsights,
   getDateRangeFromPreset,
@@ -33,9 +35,10 @@ import {
   leadsCreatedPerDay,
   topPerformerByConversion,
   topPerformerByResponseSpeed,
+  trendIndicator,
 } from '../utils/analyticsHelpers.js'
 import { aggregateLeadAging } from '../utils/leadAging.js'
-import { useManagerCopilotInsights } from '../hooks/useManagerCopilotInsights.js'
+import { usePipelineHealthData } from '../hooks/usePipelineHealthData.js'
 import ManagerRiskInsights from '../components/ManagerRiskInsights.jsx'
 
 function rangeLabel(preset, customFrom, customTo) {
@@ -71,19 +74,22 @@ export default function Analytics() {
     [organization, profile],
   )
 
-  const { leads, tasks, loading, error, reload } = useAnalyticsData(range, analyticsScope)
-  const { leads: pipelineLeads, loading: agingLoading } = useOpenPipelineLeads(
-    organization?.id ?? null,
-    analyticsScope.assignedToFilter,
-  )
-  const { insights: managerInsights, loading: managerInsightsLoading } = useManagerCopilotInsights(
-    organization?.id ?? null,
-    analyticsScope.assignedToFilter,
-  )
+  const { leads, previousLeads, tasks, loading, error, reload } = useAnalyticsData(range, analyticsScope)
+  const {
+    leads: pipelineLeads,
+    managerInsights,
+    loading: pipelineLoading,
+  } = usePipelineHealthData(organization?.id ?? null, analyticsScope.assignedToFilter)
 
   const tasksByLead = useMemo(() => indexTasksByLeadId(tasks), [tasks])
   const funnel = useMemo(() => computeFunnelMetrics(leads, tasksByLead), [leads, tasksByLead])
+  const conversionKpi = useMemo(() => computeConversionRate(leads), [leads])
   const bySource = useMemo(() => aggregateBySource(leads), [leads])
+  const prevBySource = useMemo(() => aggregateBySource(previousLeads), [previousLeads])
+  const sourceTrends = useMemo(
+    () => computeSourceTrends(bySource, prevBySource),
+    [bySource, prevBySource],
+  )
   const { best, worst } = useMemo(() => bestWorstSource(bySource), [bySource])
   const byRep = useMemo(() => aggregateByAssignee(leads, tasksByLead), [leads, tasksByLead])
   const topRepConv = useMemo(() => topPerformerByConversion(byRep), [byRep])
@@ -218,9 +224,22 @@ export default function Analytics() {
       ) : null}
 
       {loading ? (
-        <p className="muted">Loading analytics…</p>
+        <div className="card dashboard-loading-state" aria-busy="true">
+          <div className="loading-spinner" aria-hidden />
+          <p className="muted">Loading analytics…</p>
+        </div>
+      ) : leads.length === 0 ? (
+        <div className="card empty-state">
+          <EmptyState
+            icon={<EmptyInboxIcon />}
+            title="No leads in this date range"
+            description="Widen the date filter or capture more inbound leads to see analytics."
+          />
+        </div>
       ) : (
         <>
+          <ConversionRateHero conversion={conversionKpi} />
+
           {insights.length ? (
             <section className="analytics-insights card">
               <h2 className="analytics-section-title">Insights</h2>
@@ -232,7 +251,59 @@ export default function Analytics() {
             </section>
           ) : null}
 
-          <ManagerRiskInsights insights={managerInsights} loading={managerInsightsLoading} />
+          <ManagerRiskInsights insights={managerInsights} loading={pipelineLoading} />
+
+          <section className="analytics-section card">
+            <h2 className="analytics-section-title">Conversion by assignee</h2>
+            <div className="table-wrap analytics-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Assignee</th>
+                    <th className="num">Leads</th>
+                    <th className="num">Converted</th>
+                    <th className="num">Rate %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byRep.map((r) => (
+                    <tr key={r.assigned_to}>
+                      <td>{r.assigned_to}</td>
+                      <td className="num">{r.leads_assigned}</td>
+                      <td className="num">{r.leads_converted}</td>
+                      <td className="num">{r.conversion_rate.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="analytics-section card">
+            <h2 className="analytics-section-title">Conversion by industry</h2>
+            <div className="table-wrap analytics-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Industry</th>
+                    <th className="num">Leads</th>
+                    <th className="num">Converted</th>
+                    <th className="num">Rate %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byIndustry.map((r) => (
+                    <tr key={r.industry}>
+                      <td>{r.industry}</td>
+                      <td className="num">{r.lead_count}</td>
+                      <td className="num">{r.converted}</td>
+                      <td className="num">{r.conversion_rate.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           <section className="analytics-section">
             <h2 className="analytics-section-title">Conversion funnel</h2>
@@ -319,21 +390,46 @@ export default function Analytics() {
                         Hot % {sourceSort.key === 'hot_lead_pct' ? (sourceSort.dir === 'desc' ? '↓' : '↑') : ''}
                       </button>
                     </th>
+                    <th className="num">
+                      <button type="button" className="th-sort" onClick={() => toggleSourceSort('avg_score')}>
+                        Avg score {sourceSort.key === 'avg_score' ? (sourceSort.dir === 'desc' ? '↓' : '↑') : ''}
+                      </button>
+                    </th>
+                    <th className="num">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedSources.map((r) => (
+                  {sortedSources.map((r) => {
+                    const trend = sourceTrends.get(r.source)
+                    const convTrend = trendIndicator(trend?.conversion_trend ?? 'neutral')
+                    const leadsTrend = trendIndicator(trend?.leads_trend ?? 'neutral')
+                    return (
                     <tr key={r.source}>
                       <td>{r.source}</td>
-                      <td className="num">{r.total_leads}</td>
+                      <td className="num">
+                        {r.total_leads}
+                        <span className={`trend-badge ${leadsTrend.className}`} title="Lead volume vs prior period">
+                          {leadsTrend.symbol}
+                        </span>
+                      </td>
                       <td className="num">{r.converted_leads}</td>
-                      <td className="num">{r.conversion_rate.toFixed(1)}%</td>
+                      <td className="num">
+                        {r.conversion_rate.toFixed(1)}%
+                        <span className={`trend-badge ${convTrend.className}`} title="Conversion vs prior period">
+                          {convTrend.symbol}
+                        </span>
+                      </td>
                       <td className="num">
                         {r.avg_response_time_ms != null ? formatDurationMs(r.avg_response_time_ms) : '—'}
                       </td>
                       <td className="num">{r.hot_lead_pct.toFixed(1)}%</td>
+                      <td className="num">{r.avg_score != null ? r.avg_score.toFixed(0) : '—'}</td>
+                      <td className="num muted subtle" title="Conversion trend vs prior period">
+                        {convTrend.symbol}
+                      </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -444,7 +540,7 @@ export default function Analytics() {
               Open pipeline leads (excluding converted/lost) grouped by days since creation.
             </p>
             <LeadAgingBarChart data={agingBuckets} />
-            {agingLoading ? <p className="muted subtle">Refreshing aging data…</p> : null}
+            {pipelineLoading ? <p className="muted subtle">Refreshing aging data…</p> : null}
             <div className="table-wrap analytics-table-wrap">
               <table className="data-table">
                 <thead>
